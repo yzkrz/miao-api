@@ -6,7 +6,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -52,12 +51,11 @@ func userConcurrencyLimit(midjourney bool) gin.HandlerFunc {
 		}
 		if !acquired {
 			c.Header("Retry-After", strconv.Itoa(service.UserConcurrencyRetryAfterSeconds))
-			message := i18n.T(c, i18n.MsgUserConcurrencyLimit)
 			if midjourney {
-				abortWithMidjourneyMessage(c, http.StatusTooManyRequests, constant.MjUserLimitReached, message)
+				abortWithMidjourneyMessage(c, http.StatusTooManyRequests, constant.MjUserLimitReached, service.UserConcurrencyLimitMessage)
 				return
 			}
-			abortWithOpenAiMessage(c, http.StatusTooManyRequests, message, types.ErrorCodeUserConcurrencyLimitReached)
+			abortWithOpenAiMessage(c, http.StatusTooManyRequests, service.UserConcurrencyLimitMessage, types.ErrorCodeUserConcurrencyLimitReached)
 			return
 		}
 		defer lease.Release()

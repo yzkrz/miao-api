@@ -16,6 +16,10 @@ const (
 	// UserConcurrencyRetryAfterSeconds is the Retry-After a request rejected by
 	// the concurrency limit carries.
 	UserConcurrencyRetryAfterSeconds = 5
+	// UserConcurrencyLimitMessage is the error of a request rejected by the
+	// concurrency limit. Like the usage limit message it is English whatever
+	// language the user reads.
+	UserConcurrencyLimitMessage = "Concurrency limit reached. Please reduce concurrency and retry later."
 
 	userConcurrencyLeaseTTL      = 90 * time.Second
 	userConcurrencyRenewInterval = 30 * time.Second

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,7 +69,8 @@ func newUserLimitTestContext() (*gin.Context, *httptest.ResponseRecorder) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	common.SetContextKey(c, constant.ContextKeyUserSetting, dto.UserSetting{Language: "en"})
+	// A Chinese reader: the usage limit message stays English.
+	common.SetContextKey(c, constant.ContextKeyUserSetting, dto.UserSetting{Language: "zhCN"})
 	return c, recorder
 }
 
@@ -172,7 +174,7 @@ func TestCheckUserUsageLimit(t *testing.T) {
 		states         map[int64]windowState
 		pending        int64
 		wantBlocked    bool
-		wantMessage    string
+		wantWindow     string // the first sentence; the reset time is covered below
 		wantRetryAfter int64
 	}{
 		{
@@ -189,7 +191,7 @@ func TestCheckUserUsageLimit(t *testing.T) {
 				testFiveHours: {start: now - 600, used: testLimitQuota},
 			},
 			wantBlocked:    true,
-			wantMessage:    "You have reached the 5-hour usage limit.",
+			wantWindow:     "You have reached your 5-hour usage limit.",
 			wantRetryAfter: testFiveHours - 600,
 		},
 		{
@@ -217,7 +219,7 @@ func TestCheckUserUsageLimit(t *testing.T) {
 				testSevenDays: {start: now - 3600, used: testLimitQuota},
 			},
 			wantBlocked:    true,
-			wantMessage:    "You have reached the 7-day usage limit.",
+			wantWindow:     "You have reached your 7-day usage limit.",
 			wantRetryAfter: testSevenDays - 3600,
 		},
 		{
@@ -225,7 +227,7 @@ func TestCheckUserUsageLimit(t *testing.T) {
 			rules:          []model.UserUsageRule{{WindowSeconds: testFiveHours, QuotaLimit: testLimitQuota, Enabled: true}},
 			pending:        testLimitQuota,
 			wantBlocked:    true,
-			wantMessage:    "You have reached the 5-hour usage limit.",
+			wantWindow:     "You have reached your 5-hour usage limit.",
 			wantRetryAfter: testFiveHours,
 		},
 	}
@@ -248,11 +250,61 @@ func TestCheckUserUsageLimit(t *testing.T) {
 			require.NotNil(t, apiErr)
 			assert.Equal(t, http.StatusTooManyRequests, apiErr.StatusCode)
 			assert.Equal(t, types.ErrorCodeUserUsageLimitReached, apiErr.GetErrorCode())
-			assert.Equal(t, tc.wantMessage, apiErr.Error())
+			assert.True(t, strings.HasPrefix(apiErr.Error(), tc.wantWindow+" It will reset in "), apiErr.Error())
 			retryAfter, err := strconv.ParseInt(recorder.Header().Get("Retry-After"), 10, 64)
 			require.NoError(t, err)
 			// The check reads the clock again; allow for a second passing.
 			assert.InDelta(t, tc.wantRetryAfter, retryAfter, 1)
+		})
+	}
+}
+
+// The message shows the reset as the time left and as a UTC+8 clock time,
+// both rounded up so that retrying at either is past the reset.
+func TestUserUsageLimitMessageShowsTheResetTime(t *testing.T) {
+	// 2026-11-06 20:14:30 UTC+8.
+	now := time.Date(2026, 11, 6, 12, 14, 30, 0, time.UTC).Unix()
+	cases := []struct {
+		name          string
+		windowSeconds int64
+		resetIn       time.Duration
+		want          string
+	}{
+		{
+			name:          "hours and minutes, clock time rounded up to the minute",
+			windowSeconds: testFiveHours,
+			resetIn:       2*time.Hour + 14*time.Minute + 40*time.Second,
+			want:          "You have reached your 5-hour usage limit. It will reset in 2h 15m, at 2026-11-06 22:30 UTC+8. Please retry after that time.",
+		},
+		{
+			name:          "whole hours, reset on the next day in UTC+8",
+			windowSeconds: 36 * 3600,
+			resetIn:       4 * time.Hour,
+			want:          "You have reached your 36-hour usage limit. It will reset in 4h, at 2026-11-07 00:15 UTC+8. Please retry after that time.",
+		},
+		{
+			name:          "under a minute shows one minute",
+			windowSeconds: testFiveHours,
+			resetIn:       20 * time.Second,
+			want:          "You have reached your 5-hour usage limit. It will reset in 1m, at 2026-11-06 20:15 UTC+8. Please retry after that time.",
+		},
+		{
+			name:          "just under a day rounds up to one day",
+			windowSeconds: testSevenDays,
+			resetIn:       23*time.Hour + 59*time.Minute + 30*time.Second,
+			want:          "You have reached your 7-day usage limit. It will reset in 1d, at 2026-11-07 20:14 UTC+8. Please retry after that time.",
+		},
+		{
+			name:          "days and hours, hours rounded up",
+			windowSeconds: testSevenDays,
+			resetIn:       3*24*time.Hour + 3*time.Hour + 20*time.Minute,
+			want:          "You have reached your 7-day usage limit. It will reset in 3d 4h, at 2026-11-09 23:35 UTC+8. Please retry after that time.",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetAt := now + int64(tc.resetIn/time.Second)
+			assert.Equal(t, tc.want, userUsageLimitMessage(tc.windowSeconds, resetAt, now))
 		})
 	}
 }

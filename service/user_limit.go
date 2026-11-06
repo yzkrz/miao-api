@@ -2,11 +2,12 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 
@@ -110,17 +111,48 @@ func CheckUserUsageLimit(c *gin.Context, userId int, pendingQuota int64) *types.
 		return nil
 	}
 	c.Header("Retry-After", strconv.FormatInt(max(blocking.ResetAt-now, 1), 10))
-	var message string
-	if blocking.WindowSeconds%86400 == 0 {
-		message = i18n.T(c, i18n.MsgUserUsageLimitReachedDays, map[string]any{"Count": blocking.WindowSeconds / 86400})
-	} else {
-		message = i18n.T(c, i18n.MsgUserUsageLimitReachedHours, map[string]any{"Count": blocking.WindowSeconds / 3600})
-	}
 	return types.NewErrorWithStatusCode(
-		errors.New(message),
+		errors.New(userUsageLimitMessage(blocking.WindowSeconds, blocking.ResetAt, now)),
 		types.ErrorCodeUserUsageLimitReached,
 		http.StatusTooManyRequests,
 		types.ErrOptionWithSkipRetry(),
 		types.ErrOptionWithNoRecordErrorLog(),
 	)
+}
+
+// userUsageLimitResetZone is the zone the usage limit message shows the reset
+// time in, whatever the time zone of the server.
+var userUsageLimitResetZone = time.FixedZone("UTC+8", 8*3600)
+
+// userUsageLimitMessage names the used-up window and when it resets, as the
+// time left and as a UTC+8 clock time. It is English whatever language the
+// user reads. Both times round up to the minute (the time left to the hour once
+// it is a day or more), so a retry at the time shown is past the reset.
+func userUsageLimitMessage(windowSeconds, resetAt, now int64) string {
+	window := fmt.Sprintf("%d-hour", windowSeconds/3600)
+	if windowSeconds%86400 == 0 {
+		window = fmt.Sprintf("%d-day", windowSeconds/86400)
+	}
+
+	minutesLeft := max((resetAt-now+59)/60, 1)
+	var timeLeft string
+	switch {
+	case minutesLeft < 60:
+		timeLeft = fmt.Sprintf("%dm", minutesLeft)
+	case minutesLeft < 24*60:
+		timeLeft = fmt.Sprintf("%dh", minutesLeft/60)
+		if minutesLeft%60 > 0 {
+			timeLeft += fmt.Sprintf(" %dm", minutesLeft%60)
+		}
+	default:
+		hoursLeft := (minutesLeft + 59) / 60
+		timeLeft = fmt.Sprintf("%dd", hoursLeft/24)
+		if hoursLeft%24 > 0 {
+			timeLeft += fmt.Sprintf(" %dh", hoursLeft%24)
+		}
+	}
+
+	resetMinute := (resetAt + 59) / 60 * 60
+	resetTime := time.Unix(resetMinute, 0).In(userUsageLimitResetZone).Format("2006-01-02 15:04 MST")
+	return fmt.Sprintf("You have reached your %s usage limit. It will reset in %s, at %s. Please retry after that time.", window, timeLeft, resetTime)
 }
