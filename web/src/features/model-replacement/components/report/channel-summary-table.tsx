@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { LineChart } from 'lucide-react'
+import { LineChart, RefreshCw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -26,6 +26,12 @@ import {
 } from '@/components/data-table'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber, formatPercent } from '@/lib/format'
 
@@ -48,6 +54,8 @@ type ChannelSummaryTableProps = {
   rows: DetectionChannelRow[]
   model: string | null
   onViewReport: (channelId: number) => void
+  onRetest?: (channelId: number) => void
+  isDetecting?: boolean
 }
 
 export function ChannelSummaryTable(props: ChannelSummaryTableProps) {
@@ -182,6 +190,27 @@ export function ChannelSummaryTable(props: ChannelSummaryTableProps) {
       cell: (row) => (
         <div className='flex justify-end gap-1'>
           <ModelRatesPopover row={row} />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='icon-sm'
+                  disabled={
+                    props.isDetecting ||
+                    !row.in_scope ||
+                    row.status !== CHANNEL_STATUS.ENABLED
+                  }
+                  onClick={() => props.onRetest?.(row.id)}
+                  aria-label={t('Retest channel {{name}}', { name: row.name })}
+                />
+              }
+            >
+              <RefreshCw aria-hidden='true' />
+            </TooltipTrigger>
+            <TooltipContent>{t('Retest')}</TooltipContent>
+          </Tooltip>
           <Button
             type='button'
             variant='ghost'

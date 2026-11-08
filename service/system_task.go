@@ -50,7 +50,7 @@ type ScheduledSystemTaskHandler interface {
 // before the next run depends on when the previous run finished. The
 // scheduler then uses IntervalAfter instead of Interval once a run exists.
 type FinishTimeIntervalHandler interface {
-	IntervalAfter(finishedAt time.Time) time.Duration
+	IntervalAfter(task *model.SystemTask, finishedAt time.Time) time.Duration
 }
 
 var (
@@ -293,7 +293,7 @@ func runSystemTaskScheduler() {
 			}
 			interval := scheduled.Interval()
 			if timed, ok := scheduled.(FinishTimeIntervalHandler); ok {
-				interval = timed.IntervalAfter(time.Unix(latest.UpdatedAt, 0))
+				interval = timed.IntervalAfter(latest, time.Unix(latest.UpdatedAt, 0))
 			}
 			if now-latest.UpdatedAt < int64(interval.Seconds()) {
 				continue // not due yet

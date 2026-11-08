@@ -47,7 +47,7 @@ func setupModelReplacementTestDB(t *testing.T) *gorm.DB {
 		model.DB, model.LOG_DB = previousDB, previousLogDB
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}, &model.Log{}, &model.ModelReplacementRecord{}, &model.ModelReplacementAttempt{}))
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}, &model.Log{}, &model.ModelReplacementRecord{}, &model.ModelReplacementAttempt{}, &model.SystemTask{}))
 	return db
 }
 
@@ -202,7 +202,7 @@ func TestSelectModelReplacementTargetsSkipsDisabledAndExcludedChannels(t *testin
 		{Id: 6, Status: common.ChannelStatusEnabled, Models: "a", Type: constant.ChannelTypeMidjourney},
 	}
 
-	targets := selectModelReplacementTargets(setting, channels)
+	targets := selectModelReplacementTargets(setting, channels, 0)
 
 	got := map[int][]string{}
 	for _, target := range targets {
@@ -213,6 +213,72 @@ func TestSelectModelReplacementTargetsSkipsDisabledAndExcludedChannels(t *testin
 	assert.Equal(t, map[int][]string{1: {"a", "b"}, 3: {"b"}, 9: {"a"}}, got)
 	require.Len(t, targets, 3)
 	assert.Equal(t, 1, targets[0].channel.Id)
+
+	singleTarget := selectModelReplacementTargets(setting, channels, 1)
+	require.Len(t, singleTarget, 1)
+	assert.Equal(t, 1, singleTarget[0].channel.Id)
+	assert.Empty(t, selectModelReplacementTargets(setting, channels, 5))
+}
+
+func TestModelReplacementNextRunResumesThePausedChannelTimer(t *testing.T) {
+	setting := operation_setting.ModelReplacementSetting{IntervalMinutes: 10}
+	task := &model.SystemTask{
+		UpdatedAt: 100,
+		Payload:   "{\"manual\":true,\"channel_id\":7,\"resume_after_seconds\":120}",
+	}
+
+	assert.EqualValues(t, 220, modelReplacementNextRunAt(setting, task, time.Unix(200, 0)))
+	assert.Equal(t, 120*time.Second, modelReplacementIntervalAfter(task, setting, time.Unix(100, 0)))
+
+	task.Payload = "{\"manual\":true}"
+	assert.Equal(t, 600*time.Second, modelReplacementIntervalAfter(task, setting, time.Unix(100, 0)))
+}
+
+func TestRunModelReplacementChannelDetectionQueuesOnlyAnEligibleChannel(t *testing.T) {
+	db := setupModelReplacementTestDB(t)
+	previousSetting := operation_setting.ModelReplacementSettingJSON()
+	t.Cleanup(func() { operation_setting.LoadModelReplacementSetting(previousSetting) })
+	operation_setting.LoadModelReplacementSetting("{\"enabled\":true,\"interval_minutes\":10,\"rounds\":1,\"models\":[{\"model\":\"gpt-4o\",\"question\":\"Who are you?\",\"expected_answer\":\"gpt-4o\"}]}")
+
+	channel := &model.Channel{Id: 21, Name: "single", Key: "sk-test", Status: common.ChannelStatusEnabled, Models: "gpt-4o", Group: "default"}
+	require.NoError(t, channel.Insert())
+	disabled := &model.Channel{Id: 22, Name: "disabled", Key: "sk-test", Status: common.ChannelStatusManuallyDisabled, Models: "gpt-4o", Group: "default"}
+	require.NoError(t, disabled.Insert())
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.SystemTask{TaskID: "previous-detection", Type: model.SystemTaskTypeModelReplacementDetection, Status: model.SystemTaskStatusSucceeded, UpdatedAt: now - 120}).Error)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/model_replacement/channels/21/run", nil)
+	c.Params = gin.Params{{Key: "id", Value: "21"}}
+	RunModelReplacementChannelDetection(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			TaskID  string                      `json:"task_id"`
+			Payload modelReplacementTaskPayload `json:"payload"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.NotEmpty(t, response.Data.TaskID)
+	assert.Equal(t, 21, response.Data.Payload.ChannelID)
+	assert.True(t, response.Data.Payload.Manual)
+	assert.InDelta(t, 480, response.Data.Payload.ResumeAfterSeconds, 2)
+
+	active, err := model.GetActiveSystemTask(model.SystemTaskTypeModelReplacementDetection)
+	require.NoError(t, err)
+	require.NotNil(t, active)
+	require.Equal(t, response.Data.TaskID, active.TaskID)
+
+	recorder = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/model_replacement/channels/22/run", nil)
+	c.Params = gin.Params{{Key: "id", Value: "22"}}
+	RunModelReplacementChannelDetection(c)
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
 func TestSummarizeModelReplacementAttempts(t *testing.T) {
@@ -514,7 +580,7 @@ func TestModelReplacementDetectionProbesChannelsAndAppliesVerdicts(t *testing.T)
 	require.True(t, operation_setting.GetModelReplacementSetting().Enabled)
 
 	var lastProcessed, lastTotal int
-	summary, err := runModelReplacementDetection(context.Background(), "run-1", true, func(processed, total int) {
+	summary, err := runModelReplacementDetection(context.Background(), "run-1", true, 0, func(processed, total int) {
 		lastProcessed, lastTotal = processed, total
 	})
 	require.NoError(t, err)

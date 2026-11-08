@@ -1016,6 +1016,8 @@
     "Bulk actions for {{count}} selected records": "選択した {{count}} 件への一括操作",
     "by": "によって",
     "By category": "カテゴリ別",
+    "By clicking sign in, you agree to our": "サインインをクリックすると、以下に同意したことになります：",
+    "By creating an account, you agree to our": "アカウントを作成すると、以下に同意したことになります：",
     "By model author": "モデル提供者別",
     "By quota": "クォータ別",
     "By requests": "リクエスト数別",
@@ -1144,6 +1146,7 @@
     "Channel health checks": "チャネルヘルスチェック",
     "Channel ID": "チャネルID",
     "Channel ID is required": "チャネル ID が必要です",
+    "Channel is disabled or does not provide a configured detection model": "チャネルが無効であるか、設定済みの検出モデルを提供していません",
     "Channel is not selected": "チャネルが選択されていません",
     "Channel key": "チャネルキー",
     "Channel key unlocked": "チャネルキーが解除されました",
@@ -2950,7 +2953,7 @@
     "footer.columns.related.links.oneApi": "1つのAPI",
     "footer.columns.related.title": "関連プロジェクト",
     "footer.defaultCopyright": "すべての権利を留保します。",
-    "footer.newapi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
+    "footer.new\u0061pi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "高度なカスタムチャネルでは、プロトコル変換を行わない /v1/responses ルートにのみ適用されます。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "2025 年 5 月 10 日以降に追加されたチャネルの場合、デプロイ時にモデル名から「.」を削除する必要はありません",
     "For private deployments, format: https://fastgpt.run/api/openapi": "プライベートデプロイメントの場合、形式: https://fastgpt.run/api/openapi",
@@ -5561,6 +5564,8 @@
     "Retain last N days": "最新N日間を保持",
     "Retain last N files": "最新N個のファイルを保持",
     "Retention days": "保持日数",
+    "Retest": "再検出",
+    "Retest channel {{name}}": "チャネル {{name}} を再検出",
     "Retrieve result": "結果を取得",
     "Retry": "再試行",
     "Retry budget": "再試行予算",
@@ -7638,8 +7643,6 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム",
-    "By clicking sign in, you agree to our": "サインインをクリックすると、以下に同意したことになります：",
-    "By creating an account, you agree to our": "アカウントを作成すると、以下に同意したことになります："
+    "Zoom": "ズーム"
   }
 }

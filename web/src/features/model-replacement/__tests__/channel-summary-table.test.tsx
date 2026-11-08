@@ -122,6 +122,73 @@ describe('ChannelSummaryTable actions', () => {
     expect(onViewReport).toHaveBeenCalledWith(7)
   })
 
+  it('retests only the selected eligible channel and disables retest during another run', async () => {
+    const user = userEvent.setup()
+    const onRetest = vi.fn()
+    const view = render(
+      <ChannelSummaryTable
+        rows={rows}
+        model={null}
+        onViewReport={vi.fn()}
+        onRetest={onRetest}
+        isDetecting={false}
+      />
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'Retest channel upstream' })
+    )
+    expect(onRetest).toHaveBeenCalledExactlyOnceWith(7)
+
+    view.rerender(
+      <ChannelSummaryTable
+        rows={rows}
+        model={null}
+        onViewReport={vi.fn()}
+        onRetest={onRetest}
+        isDetecting
+      />
+    )
+    expect(
+      screen.getByRole('button', { name: 'Retest channel upstream' })
+    ).toBeDisabled()
+    expect(
+      screen.getByRole('button', { name: 'Retest channel fresh' })
+    ).toBeDisabled()
+    expect(onRetest).toHaveBeenCalledExactlyOnceWith(7)
+  })
+
+  it('shows a retest action beside channels that cannot be tested but disables it', async () => {
+    const user = userEvent.setup()
+    render(
+      <ChannelSummaryTable
+        rows={[
+          { ...rows[0], status: 3 },
+          { ...rows[1], in_scope: false },
+        ]}
+        model={null}
+        onViewReport={vi.fn()}
+        onRetest={vi.fn()}
+        isDetecting={false}
+      />
+    )
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: 'Hide automatically disabled channels',
+      })
+    )
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: 'Hide channels no longer in detection scope',
+      })
+    )
+    expect(
+      screen.getByRole('button', { name: 'Retest channel upstream' })
+    ).toBeDisabled()
+    expect(
+      screen.getByRole('button', { name: 'Retest channel fresh' })
+    ).toBeDisabled()
+  })
+
   it('disables both buttons for a channel that has not been detected', () => {
     render(
       <ChannelSummaryTable rows={rows} model={null} onViewReport={vi.fn()} />
@@ -295,6 +362,104 @@ describe('ChannelSummaryTable filters', () => {
     await user.click(screen.getByRole('tab', { name: 'Not requested yet (1)' }))
     expect(screen.getByText('fresh')).toBeInTheDocument()
     expect(screen.queryByText('failed')).not.toBeInTheDocument()
+  })
+
+  it('partitions every visible channel into exactly one status, including a selected model that was not requested', async () => {
+    const selectedModelRecord = (
+      id: number,
+      verdict: 'passed' | 'replaced' | 'failed'
+    ) => ({
+      ...latest,
+      id,
+      verdict,
+      models: [
+        {
+          ...latest.models[1],
+          total: 1,
+          matched: verdict === 'passed' ? 1 : 0,
+          mismatched: verdict === 'replaced' ? 1 : 0,
+          failed: verdict === 'failed' ? 1 : 0,
+          match_percent: verdict === 'passed' ? 100 : 0,
+          verdict,
+        },
+      ],
+    })
+    const partitionRows: DetectionChannelRow[] = [
+      {
+        ...rows[0],
+        id: 21,
+        name: 'healthy',
+        latest: selectedModelRecord(21, 'passed'),
+      },
+      {
+        ...rows[0],
+        id: 22,
+        name: 'abnormal',
+        latest: selectedModelRecord(22, 'replaced'),
+      },
+      {
+        ...rows[0],
+        id: 23,
+        name: 'failed',
+        latest: selectedModelRecord(23, 'failed'),
+      },
+      { ...rows[1], id: 24, name: 'never-tested' },
+      {
+        ...rows[0],
+        id: 25,
+        name: 'other-model',
+        latest: {
+          ...latest,
+          id: 25,
+          verdict: 'passed',
+          models: [latest.models[0]],
+        },
+      },
+    ]
+    const user = userEvent.setup()
+    render(
+      <ChannelSummaryTable
+        rows={partitionRows}
+        model='claude'
+        onViewReport={vi.fn()}
+        onRetest={vi.fn()}
+        isDetecting={false}
+      />
+    )
+    expect(
+      screen.getByRole('tab', { name: 'All statuses (5)' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('tab', { name: 'Healthy channels (1)' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('tab', { name: 'Abnormal channels (1)' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('tab', { name: 'Request failed (1)' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('tab', { name: 'Not requested yet (2)' })
+    ).toBeInTheDocument()
+    const visibleChannels = new Set<string>()
+    for (const [tab, expected] of [
+      ['Healthy channels (1)', ['healthy']],
+      ['Abnormal channels (1)', ['abnormal']],
+      ['Request failed (1)', ['failed']],
+      ['Not requested yet (2)', ['never-tested', 'other-model']],
+    ] as const) {
+      await user.click(screen.getByRole('tab', { name: tab }))
+      const renderedRows = screen.getAllByRole('row').slice(1)
+      expect(renderedRows).toHaveLength(expected.length)
+      for (const name of expected) {
+        expect(
+          renderedRows.some((row) => row.textContent?.includes(name))
+        ).toBe(true)
+        expect(visibleChannels.has(name)).toBe(false)
+        visibleChannels.add(name)
+      }
+    }
+    expect(visibleChannels.size).toBe(5)
   })
 
   it('hides manually disabled channels by default without hiding enabled channels with the same latest result', async () => {

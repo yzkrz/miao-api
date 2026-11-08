@@ -40,7 +40,9 @@ var modelReplacementDisableReasons = map[string]string{
 
 // modelReplacementTaskPayload marks a run triggered from the report page.
 type modelReplacementTaskPayload struct {
-	Manual bool `json:"manual,omitempty"`
+	Manual             bool  `json:"manual,omitempty"`
+	ChannelID          int   `json:"channel_id,omitempty"`
+	ResumeAfterSeconds int64 `json:"resume_after_seconds,omitempty"`
 }
 
 // modelReplacementRunSummary is persisted as the system task result.
@@ -72,8 +74,24 @@ func (modelReplacementHandler) Interval() time.Duration {
 
 // IntervalAfter picks the wait from the time window the previous run finished
 // in, so a run that ends at night waits for the night interval.
-func (modelReplacementHandler) IntervalAfter(finishedAt time.Time) time.Duration {
-	return operation_setting.GetModelReplacementSetting().IntervalAt(finishedAt)
+func modelReplacementIntervalAfter(task *model.SystemTask, setting operation_setting.ModelReplacementSetting, finishedAt time.Time) time.Duration {
+	var payload modelReplacementTaskPayload
+	if task != nil && task.DecodePayload(&payload) == nil && payload.ChannelID > 0 {
+		return time.Duration(max(payload.ResumeAfterSeconds, 0)) * time.Second
+	}
+	return setting.IntervalAt(finishedAt)
+}
+
+func (modelReplacementHandler) IntervalAfter(task *model.SystemTask, finishedAt time.Time) time.Duration {
+	return modelReplacementIntervalAfter(task, operation_setting.GetModelReplacementSetting(), finishedAt)
+}
+
+func modelReplacementNextRunAt(setting operation_setting.ModelReplacementSetting, latest *model.SystemTask, now time.Time) int64 {
+	if latest == nil {
+		return now.Unix()
+	}
+	finishedAt := time.Unix(latest.UpdatedAt, 0)
+	return max(now.Unix(), latest.UpdatedAt+int64(modelReplacementIntervalAfter(latest, setting, finishedAt).Seconds()))
 }
 
 func (modelReplacementHandler) NewPayload() any { return nil }
@@ -84,7 +102,7 @@ func (modelReplacementHandler) Run(ctx context.Context, task *model.SystemTask, 
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
 		return
 	}
-	summary, err := runModelReplacementDetection(ctx, task.TaskID, payload.Manual, service.NewSystemTaskProgressReporter(task, runnerID))
+	summary, err := runModelReplacementDetection(ctx, task.TaskID, payload.Manual, payload.ChannelID, service.NewSystemTaskProgressReporter(task, runnerID))
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
 		return
@@ -107,10 +125,10 @@ type modelReplacementTarget struct {
 // selectModelReplacementTargets returns the enabled channels that serve at
 // least one detected model and are not excluded for it. Disabled channels are
 // skipped until the automatic recovery rules enable them again.
-func selectModelReplacementTargets(setting operation_setting.ModelReplacementSetting, channels []*model.Channel) []*modelReplacementTarget {
+func selectModelReplacementTargets(setting operation_setting.ModelReplacementSetting, channels []*model.Channel, channelID int) []*modelReplacementTarget {
 	targets := make([]*modelReplacementTarget, 0)
 	for _, channel := range channels {
-		if channel == nil || channel.Status != common.ChannelStatusEnabled || slices.Contains(unsupportedTestChannelTypes, channel.Type) {
+		if channel == nil || channelID > 0 && channel.Id != channelID || channel.Status != common.ChannelStatusEnabled || slices.Contains(unsupportedTestChannelTypes, channel.Type) {
 			continue
 		}
 		channelModels := channel.GetModels()
@@ -131,7 +149,7 @@ func selectModelReplacementTargets(setting operation_setting.ModelReplacementSet
 	return targets
 }
 
-func runModelReplacementDetection(ctx context.Context, runID string, manual bool, report func(processed, total int)) (modelReplacementRunSummary, error) {
+func runModelReplacementDetection(ctx context.Context, runID string, manual bool, channelID int, report func(processed, total int)) (modelReplacementRunSummary, error) {
 	setting := operation_setting.GetModelReplacementSetting()
 	summary := modelReplacementRunSummary{StartedAt: common.GetTimestamp(), Manual: manual}
 	if !setting.Enabled {
@@ -146,7 +164,10 @@ func runModelReplacementDetection(ctx context.Context, runID string, manual bool
 		return summary, err
 	}
 
-	targets := selectModelReplacementTargets(setting, channels)
+	targets := selectModelReplacementTargets(setting, channels, channelID)
+	if channelID > 0 && len(targets) == 0 {
+		return summary, fmt.Errorf("channel #%d is not enabled or does not provide a configured detection model", channelID)
+	}
 	timeout := time.Duration(setting.TimeoutSeconds) * time.Second
 	total := len(targets) * setting.Rounds
 	processed := 0

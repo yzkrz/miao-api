@@ -43,6 +43,7 @@ import {
   getModelReplacementChannels,
   getModelReplacementOverview,
   modelReplacementQueryKeys,
+  runModelReplacementChannelDetection,
   runModelReplacementDetection,
 } from './api'
 import { ChannelReportPanel } from './components/report/channel-report-panel'
@@ -61,6 +62,9 @@ export function ModelReplacement() {
   const [model, setModel] = useState<string | null>(null)
   const [channelId, setChannelId] = useState<number | null>(null)
   const [recordId, setRecordId] = useState<number | null>(null)
+  const [trackedChannelRunId, setTrackedChannelRunId] = useState<string | null>(
+    null
+  )
   const [settingsOpen, setSettingsOpen] = useState(false)
   const reportRef = useRef<HTMLDivElement>(null)
 
@@ -73,15 +77,18 @@ export function ModelReplacement() {
         ? ACTIVE_POLL_INTERVAL_MS
         : IDLE_POLL_INTERVAL_MS,
   })
+  const activeRunId = overviewQuery.data?.active_run?.task_id ?? null
   const channelsQuery = useQuery({
     queryKey: modelReplacementQueryKeys.channels(),
     queryFn: async () =>
       requireServerSuccess(await getModelReplacementChannels()).data ?? [],
-    refetchInterval: IDLE_POLL_INTERVAL_MS,
+    refetchInterval:
+      activeRunId || trackedChannelRunId
+        ? ACTIVE_POLL_INTERVAL_MS
+        : IDLE_POLL_INTERVAL_MS,
   })
 
   // Reload the report once a run finishes so the new results show up.
-  const activeRunId = overviewQuery.data?.active_run?.task_id ?? null
   const previousActiveRunId = useRef<string | null>(null)
   useEffect(() => {
     if (previousActiveRunId.current && !activeRunId) {
@@ -95,10 +102,46 @@ export function ModelReplacement() {
     previousActiveRunId.current = activeRunId
   }, [activeRunId, queryClient])
 
+  useEffect(() => {
+    if (
+      trackedChannelRunId &&
+      activeRunId !== trackedChannelRunId &&
+      overviewQuery.data?.last_run?.task_id === trackedChannelRunId
+    ) {
+      void queryClient.invalidateQueries({
+        queryKey: modelReplacementQueryKeys.channels(),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [...modelReplacementQueryKeys.all, 'history'],
+      })
+      setTrackedChannelRunId(null)
+    }
+  }, [
+    activeRunId,
+    overviewQuery.data?.last_run?.task_id,
+    queryClient,
+    trackedChannelRunId,
+  ])
+
   const runMutation = useMutation({
     mutationFn: async () =>
       requireServerSuccess(await runModelReplacementDetection()),
     onSuccess: () => {
+      toast.success(t('Detection started'))
+    },
+    onError: (error) => handleServerError(error),
+    onSettled: () =>
+      queryClient.invalidateQueries({
+        queryKey: modelReplacementQueryKeys.overview(),
+      }),
+  })
+  const retestMutation = useMutation({
+    mutationFn: async (id: number) =>
+      requireServerSuccess(await runModelReplacementChannelDetection(id))
+        .data ?? null,
+    onSuccess: (run) => {
+      if (!run) return
+      setTrackedChannelRunId(run.task_id)
       toast.success(t('Detection started'))
     },
     onError: (error) => handleServerError(error),
@@ -194,6 +237,13 @@ export function ModelReplacement() {
               rows={detectedRows}
               model={model}
               onViewReport={handleViewReport}
+              onRetest={(id) => retestMutation.mutate(id)}
+              isDetecting={
+                !!activeRunId ||
+                !!trackedChannelRunId ||
+                runMutation.isPending ||
+                retestMutation.isPending
+              }
             />
           )}
         </TitledCard>

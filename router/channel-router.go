@@ -62,6 +62,7 @@ var modelReplacementPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/candidates", permission: authz.ChannelModelReplacement, handler: controller.GetModelReplacementCandidates},
 	{method: http.MethodGet, path: "/overview", permission: authz.ChannelModelReplacement, handler: controller.GetModelReplacementOverview},
 	{method: http.MethodPost, path: "/run", permission: authz.ChannelModelReplacement, handler: controller.RunModelReplacementDetection},
+	{method: http.MethodPost, path: "/channels/:id/run", permission: authz.ChannelModelReplacement, handler: controller.RunModelReplacementChannelDetection},
 	{method: http.MethodGet, path: "/channels", permission: authz.ChannelModelReplacement, handler: controller.GetModelReplacementChannels},
 	{method: http.MethodGet, path: "/history", permission: authz.ChannelModelReplacement, handler: controller.GetModelReplacementHistory},
 	{method: http.MethodGet, path: "/records/:id/attempts", permission: authz.ChannelModelReplacement, handler: controller.GetModelReplacementRecordAttempts},

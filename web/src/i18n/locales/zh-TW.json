@@ -1016,6 +1016,8 @@
     "Bulk actions for {{count}} selected records": "對 {{count}} 筆所選記錄執行批次操作",
     "by": "由",
     "By category": "按行業",
+    "By clicking sign in, you agree to our": "點擊登入即表示您同意我們的",
+    "By creating an account, you agree to our": "建立帳戶即表示您同意我們的",
     "By model author": "按模型廠商",
     "By quota": "按額度",
     "By requests": "按請求數",
@@ -1144,6 +1146,7 @@
     "Channel health checks": "渠道健康檢查",
     "Channel ID": "渠道 ID",
     "Channel ID is required": "缺少渠道 ID",
+    "Channel is disabled or does not provide a configured detection model": "管道已停用或未提供任何已設定的檢測模型",
     "Channel is not selected": "尚未選擇管道",
     "Channel key": "渠道金鑰",
     "Channel key unlocked": "渠道金鑰已解鎖",
@@ -2950,7 +2953,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相關項目",
     "footer.defaultCopyright": "版權所有。",
-    "footer.newapi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
+    "footer.new\u0061pi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "進階自訂渠道僅對 /v1/responses 且不做協定轉換的路由生效。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "對於 2025 年 5 月 10 日之後新增的渠道，在部署時無需從模型名稱中移除 \".\"",
     "For private deployments, format: https://fastgpt.run/api/openapi": "對於私有部署，格式為：https://fastgpt.run/api/openapi",
@@ -5561,6 +5564,8 @@
     "Retain last N days": "保留最近N天",
     "Retain last N files": "保留最近 N 個檔案",
     "Retention days": "保留天數",
+    "Retest": "重新檢測",
+    "Retest channel {{name}}": "重新檢測管道 {{name}}",
     "Retrieve result": "查詢結果",
     "Retry": "重試",
     "Retry budget": "重試預算",
@@ -7638,8 +7643,6 @@
     "Zhipu": "智譜",
     "Zhipu GLM": "智譜GLM",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放",
-    "By clicking sign in, you agree to our": "點擊登入即表示您同意我們的",
-    "By creating an account, you agree to our": "建立帳戶即表示您同意我們的"
+    "Zoom": "縮放"
   }
 }

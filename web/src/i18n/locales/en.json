@@ -1016,6 +1016,8 @@
     "Bulk actions for {{count}} selected records": "Bulk actions for {{count}} selected records",
     "by": "by",
     "By category": "By category",
+    "By clicking sign in, you agree to our": "By clicking sign in, you agree to our",
+    "By creating an account, you agree to our": "By creating an account, you agree to our",
     "By model author": "By model author",
     "By quota": "By quota",
     "By requests": "By requests",
@@ -1144,6 +1146,7 @@
     "Channel health checks": "Channel health checks",
     "Channel ID": "Channel ID",
     "Channel ID is required": "Channel ID is required",
+    "Channel is disabled or does not provide a configured detection model": "Channel is disabled or does not provide a configured detection model",
     "Channel is not selected": "Channel is not selected",
     "Channel key": "Channel key",
     "Channel key unlocked": "Channel key unlocked",
@@ -2950,7 +2953,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Related Projects",
     "footer.defaultCopyright": "All rights reserved.",
-    "footer.newapi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
+    "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
     "For private deployments, format: https://fastgpt.run/api/openapi": "For private deployments, format: https://fastgpt.run/api/openapi",
@@ -5561,6 +5564,8 @@
     "Retain last N days": "Retain last N days",
     "Retain last N files": "Retain last N files",
     "Retention days": "Retention days",
+    "Retest": "Retest",
+    "Retest channel {{name}}": "Retest channel {{name}}",
     "Retrieve result": "Retrieve result",
     "Retry": "Retry",
     "Retry budget": "Retry budget",
@@ -7638,8 +7643,6 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "By clicking sign in, you agree to our": "By clicking sign in, you agree to our",
-    "By creating an account, you agree to our": "By creating an account, you agree to our"
+    "Zoom": "Zoom"
   }
 }

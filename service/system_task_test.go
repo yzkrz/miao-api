@@ -99,11 +99,11 @@ func TestSystemTaskSchedulerCreatesWhenDueAndDedups(t *testing.T) {
 
 type stubFinishTimeHandler struct {
 	stubScheduledHandler
-	intervalAfter func(finishedAt time.Time) time.Duration
+	intervalAfter func(task *model.SystemTask, finishedAt time.Time) time.Duration
 }
 
-func (h *stubFinishTimeHandler) IntervalAfter(finishedAt time.Time) time.Duration {
-	return h.intervalAfter(finishedAt)
+func (h *stubFinishTimeHandler) IntervalAfter(task *model.SystemTask, finishedAt time.Time) time.Duration {
+	return h.intervalAfter(task, finishedAt)
 }
 
 func TestSystemTaskSchedulerUsesTheIntervalForThePreviousFinishTime(t *testing.T) {
@@ -113,7 +113,7 @@ func TestSystemTaskSchedulerUsesTheIntervalForThePreviousFinishTime(t *testing.T
 	wait := time.Hour
 	handler := &stubFinishTimeHandler{
 		stubScheduledHandler: stubScheduledHandler{taskType: "test_finish_time", enabled: true, interval: time.Minute},
-		intervalAfter: func(finishedAt time.Time) time.Duration {
+		intervalAfter: func(_ *model.SystemTask, finishedAt time.Time) time.Duration {
 			seenFinish = finishedAt
 			return wait
 		},

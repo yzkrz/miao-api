@@ -86,6 +86,13 @@ export async function runModelReplacementDetection() {
   return res.data
 }
 
+export async function runModelReplacementChannelDetection(channelId: number) {
+  const res = await api.post<ApiResponse<DetectionRun>>(
+    `${BASE_PATH}/channels/${channelId}/run`
+  )
+  return res.data
+}
+
 export async function getModelReplacementChannels() {
   const res = await api.get<ApiResponse<DetectionChannelRow[]>>(
     `${BASE_PATH}/channels`

@@ -53,6 +53,28 @@ func TestChannelStatusRoutesRegisterWithoutConflict(t *testing.T) {
 	})
 }
 
+func TestModelReplacementChannelRetestUsesModelReplacementPermission(t *testing.T) {
+	found := false
+	for _, route := range modelReplacementPermissionRoutes {
+		if route.method == http.MethodPost && route.path == "/channels/:id/run" {
+			assert.Equal(t, authz.ChannelModelReplacement, route.permission)
+			assert.Equal(t, reflect.ValueOf(controller.RunModelReplacementChannelDetection).Pointer(), reflect.ValueOf(route.handler).Pointer())
+			found = true
+		}
+	}
+	require.True(t, found, "single-channel retest route must be registered")
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	modelReplacementRoute := engine.Group("/api/model_replacement")
+	for _, route := range modelReplacementPermissionRoutes {
+		handlePermissionRoute(modelReplacementRoute, route.method, route.path, route.permission, route.handler)
+	}
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/model_replacement/channels/1/run", nil))
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
 func assertChannelRoutePermission(t *testing.T, method string, path string, permission authz.Permission, handler any) {
 	t.Helper()
 	for _, route := range channelPermissionRoutes {

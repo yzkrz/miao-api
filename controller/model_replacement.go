@@ -160,11 +160,8 @@ func GetModelReplacementOverview(c *gin.Context) {
 	}
 	// The wait after the latest run follows the window that run finished in;
 	// before the first run it follows the current time.
-	waitFrom := time.Now()
-	if latestTask != nil {
-		waitFrom = time.Unix(latestTask.UpdatedAt, 0)
-	}
-	nextInterval := setting.IntervalAt(waitFrom)
+	now := time.Now()
+	nextInterval := modelReplacementIntervalAfter(latestTask, setting, now)
 	data := gin.H{
 		"enabled":               setting.Enabled,
 		"interval_minutes":      setting.IntervalMinutes,
@@ -182,11 +179,7 @@ func GetModelReplacementOverview(c *gin.Context) {
 		data["active_run"] = activeTask.ToResponse()
 	}
 	if setting.Enabled && activeTask == nil {
-		nextRunAt := common.GetTimestamp()
-		if latestTask != nil {
-			nextRunAt = max(nextRunAt, latestTask.UpdatedAt+int64(nextInterval/time.Second))
-		}
-		data["next_run_at"] = nextRunAt
+		data["next_run_at"] = modelReplacementNextRunAt(setting, latestTask, now)
 	}
 	common.ApiSuccess(c, data)
 }
@@ -198,6 +191,57 @@ func RunModelReplacementDetection(c *gin.Context) {
 		return
 	}
 	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeModelReplacementDetection, modelReplacementTaskPayload{Manual: true})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !created {
+		common.ApiErrorStatus(c, http.StatusConflict, common.NewMessage("A model replacement detection run is already running or queued"), gin.H{"data": task.ToResponse()})
+		return
+	}
+	common.ApiSuccess(c, task.ToResponse())
+}
+
+// RunModelReplacementChannelDetection queues one eligible channel. The
+// remaining scheduler delay is stored in the task so the global timer pauses
+// during this run and resumes with the same time left afterward.
+func RunModelReplacementChannelDetection(c *gin.Context) {
+	setting := operation_setting.GetModelReplacementSetting()
+	if !setting.Enabled {
+		common.ApiErrorT(c, "Model replacement detection is turned off. Turn it on in settings first.")
+		return
+	}
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelID <= 0 {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	channel, err := model.GetChannelById(channelID, true)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		common.ApiErrorStatus(c, http.StatusNotFound, common.NewMessage("Channel does not exist"))
+		return
+	}
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if len(selectModelReplacementTargets(setting, []*model.Channel{channel}, channelID)) == 0 {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Channel is disabled or does not provide a configured detection model"))
+		return
+	}
+	latestTask, err := model.GetLatestSystemTask(model.SystemTaskTypeModelReplacementDetection)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	now := time.Now()
+	nextRunAt := modelReplacementNextRunAt(setting, latestTask, now)
+	payload := modelReplacementTaskPayload{
+		Manual:             true,
+		ChannelID:          channelID,
+		ResumeAfterSeconds: max(nextRunAt-now.Unix(), 0),
+	}
+	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeModelReplacementDetection, payload)
 	if err != nil {
 		common.ApiError(c, err)
 		return
