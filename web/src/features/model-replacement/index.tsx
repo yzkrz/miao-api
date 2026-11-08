@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { HeartPulse, LineChart, ListChecks, Settings2 } from 'lucide-react'
+import { LineChart, ListChecks, Settings2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -47,10 +47,9 @@ import {
 } from './api'
 import { ChannelReportPanel } from './components/report/channel-report-panel'
 import { ChannelSummaryTable } from './components/report/channel-summary-table'
-import { HealthChannelTabs } from './components/report/health-channel-tabs'
 import { OverviewCards } from './components/report/overview-cards'
 import { ModelReplacementSettingsDrawer } from './components/settings/model-replacement-settings-drawer'
-import { splitByLatestVerdict } from './lib/report'
+import { countChannelHealth } from './lib/report'
 
 const ACTIVE_POLL_INTERVAL_MS = 5000
 const IDLE_POLL_INTERVAL_MS = 30000
@@ -78,6 +77,7 @@ export function ModelReplacement() {
     queryKey: modelReplacementQueryKeys.channels(),
     queryFn: async () =>
       requireServerSuccess(await getModelReplacementChannels()).data ?? [],
+    refetchInterval: IDLE_POLL_INTERVAL_MS,
   })
 
   // Reload the report once a run finishes so the new results show up.
@@ -118,12 +118,8 @@ export function ModelReplacement() {
     { value: ALL_MODELS, label: t('All models (worst)') },
     ...models.map((name) => ({ value: name, label: name })),
   ]
-  // The overview counts the channels detection currently covers, the same
-  // channels the healthy and abnormal lists show by default.
-  const healthCounts = useMemo(
-    () => splitByLatestVerdict(rows.filter((row) => row.in_scope)),
-    [rows]
-  )
+  // Visibility filters do not change the union of channels in detection scope.
+  const healthCounts = useMemo(() => countChannelHealth(rows), [rows])
   // A chart channel that has since been deleted falls back to all channels.
   const chartChannelId = detectedRows.some((row) => row.id === channelId)
     ? channelId
@@ -149,8 +145,8 @@ export function ModelReplacement() {
       <div className='flex flex-col gap-4'>
         <OverviewCards
           overview={overview}
-          healthyCount={healthCounts.healthy.length}
-          abnormalCount={healthCounts.abnormal.length}
+          healthyCount={healthCounts.healthy}
+          totalCount={healthCounts.total}
           isStarting={runMutation.isPending}
           onRunNow={() => runMutation.mutate()}
         />
@@ -221,17 +217,6 @@ export function ModelReplacement() {
             />
           </TitledCard>
         </div>
-
-        <TitledCard
-          title={t('Healthy and abnormal channels')}
-          description={t(
-            "Maintained from each channel's latest detection result and updated after every run. Channels that have not been detected are not listed."
-          )}
-          icon={<HeartPulse aria-hidden='true' />}
-          disableHoverEffect
-        >
-          <HealthChannelTabs rows={rows} />
-        </TitledCard>
       </div>
     )
   }

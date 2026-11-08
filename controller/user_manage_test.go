@@ -844,6 +844,68 @@ func TestResetUserLimitWindowsEndsTheCurrentWindow(t *testing.T) {
 	assert.Len(t, audits, 1)
 }
 
+func TestUserLimitsAuditPermissionAllowsNonRootTargets(t *testing.T) {
+	db, user := setupUserLimitsTest(t)
+	previousMaster := common.IsMasterNode
+	common.IsMasterNode = true
+	t.Cleanup(func() { common.IsMasterNode = previousMaster })
+	require.NoError(t, authz.Init(db))
+	operator := model.User{Id: 9999, Username: "root-operator"}
+	require.NoError(t, db.Model(&operator).Update("role", common.RoleAdminUser).Error)
+	admin := model.User{Username: "peer-admin", Role: common.RoleAdminUser, AffCode: "peer-admin-aff"}
+	root := model.User{Username: "protected-root", Role: common.RoleRootUser, AffCode: "protected-root-aff"}
+	require.NoError(t, db.Create(&admin).Error)
+	require.NoError(t, db.Create(&root).Error)
+	for _, id := range []int{operator.Id, admin.Id, root.Id} {
+		t.Cleanup(func() { model.InvalidateUserLimitSnapshot(id) })
+	}
+	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: true}}))
+	for _, target := range []model.User{user, admin, operator} {
+		t.Run(target.Username, func(t *testing.T) {
+			response := performUserLimitsRequest(t, UpdateUserLimits, http.MethodPut, target.Id, common.RoleAdminUser, `{"max_concurrency":3,"usage_rules":[{"window_seconds":3600,"quota_limit":100,"enabled":true}]}`)
+			require.True(t, response.Success, response.Message)
+			assert.Equal(t, 3, response.Data.MaxConcurrency)
+			require.Len(t, response.Data.UsageRules, 1)
+			assert.EqualValues(t, 100, response.Data.UsageRules[0].QuotaLimit)
+			model.RecordUserUsageWindows(target.Id, 50)
+			response = performUserLimitsRequest(t, GetUserLimits, http.MethodGet, target.Id, common.RoleAdminUser, "")
+			require.True(t, response.Success, response.Message)
+			assert.EqualValues(t, 50, response.Data.UsageRules[0].UsedQuota)
+			response = performUserLimitsRequest(t, ResetUserLimitWindows, http.MethodPost, target.Id, common.RoleAdminUser, `{}`)
+			require.True(t, response.Success, response.Message)
+			assert.Zero(t, response.Data.UsageRules[0].UsedQuota)
+		})
+	}
+	for _, op := range []struct {
+		handler      gin.HandlerFunc
+		method, body string
+	}{
+		{GetUserLimits, http.MethodGet, ""},
+		{UpdateUserLimits, http.MethodPut, `{"max_concurrency":9}`},
+		{ResetUserLimitWindows, http.MethodPost, `{}`},
+	} {
+		assert.False(t, performUserLimitsRequest(t, op.handler, op.method, root.Id, common.RoleAdminUser, op.body).Success, "audit grant cannot manage root")
+		assert.False(t, performUserLimitsRequest(t, op.handler, op.method, admin.Id, common.RoleCommonUser, op.body).Success, "a grant cannot bypass the administrator requirement")
+	}
+	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: false}}))
+	for _, targetID := range []int{admin.Id, operator.Id} {
+		model.RecordUserUsageWindows(targetID, 50)
+		assert.False(t, performUserLimitsRequest(t, GetUserLimits, http.MethodGet, targetID, common.RoleAdminUser, "").Success)
+		assert.False(t, performUserLimitsRequest(t, UpdateUserLimits, http.MethodPut, targetID, common.RoleAdminUser, `{"max_concurrency":9}`).Success)
+		assert.False(t, performUserLimitsRequest(t, ResetUserLimitWindows, http.MethodPost, targetID, common.RoleAdminUser, `{}`).Success)
+		snapshot, err := model.LoadUserLimitSnapshot(targetID)
+		require.NoError(t, err)
+		assert.Equal(t, 3, snapshot.MaxConcurrency, "revocation takes effect before the next write")
+		windows, err := model.GetUserUsageWindows(targetID)
+		require.NoError(t, err)
+		require.Len(t, windows, 1)
+		assert.EqualValues(t, 50, windows[0].UsedQuota, "revocation prevents resetting the window")
+	}
+	var audits []model.AuditLog
+	require.NoError(t, model.LOG_DB.Find(&audits).Error)
+	assert.Len(t, audits, 6, "each successful update and reset is audited")
+}
+
 func TestGetSelfLimitsShowsOnlyEnabledRules(t *testing.T) {
 	_, user := setupUserLimitsTest(t)
 	require.NoError(t, model.SaveUserLimitPolicy(user.Id, 2, []model.UserUsageRule{

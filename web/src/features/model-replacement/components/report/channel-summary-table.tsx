@@ -25,6 +25,7 @@ import {
   type StaticDataTableColumn,
 } from '@/components/data-table'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber, formatPercent } from '@/lib/format'
 
@@ -35,10 +36,12 @@ import {
   formatTimeRange,
   getRecordMatchPercent,
   getRecordVerdict,
+  type ChannelStatusFilter,
 } from '../../lib/report'
 import type { DetectionChannelRow } from '../../types'
 import { ChannelStatusBadge, VerdictBadge } from './badges'
 import { ChannelSummaryFilters } from './channel-filters'
+import { ChannelStatusTabs } from './channel-status-tabs'
 import { ModelRatesPopover } from './model-rates-popover'
 
 type ChannelSummaryTableProps = {
@@ -51,10 +54,30 @@ export function ChannelSummaryTable(props: ChannelSummaryTableProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [filter, setFilter] = useState(DEFAULT_CHANNEL_SUMMARY_FILTER)
-  const rows = useMemo(
-    () => filterChannelSummary(props.rows, filter, props.model),
-    [props.rows, filter, props.model]
-  )
+  const lists = useMemo(() => {
+    const all = filterChannelSummary(
+      props.rows,
+      { ...filter, status: 'all' },
+      props.model
+    )
+    const grouped: Record<ChannelStatusFilter, DetectionChannelRow[]> = {
+      all,
+      healthy: [],
+      abnormal: [],
+      failed: [],
+      unrequested: [],
+    }
+    for (const row of all) {
+      const verdict = row.latest
+        ? getRecordVerdict(row.latest, props.model)
+        : null
+      if (verdict === 'passed') grouped.healthy.push(row)
+      else if (verdict === 'replaced') grouped.abnormal.push(row)
+      else if (verdict === 'failed') grouped.failed.push(row)
+      else grouped.unrequested.push(row)
+    }
+    return grouped
+  }, [props.rows, filter, props.model])
 
   const columns: StaticDataTableColumn<DetectionChannelRow>[] = [
     {
@@ -74,6 +97,12 @@ export function ChannelSummaryTable(props: ChannelSummaryTableProps) {
           </span>
         </div>
       ),
+    },
+    {
+      id: 'groups',
+      header: t('Groups'),
+      className: 'min-w-32 max-w-64 whitespace-normal break-words',
+      cell: (row) => row.groups.join(', ') || '-',
     },
     {
       id: 'period',
@@ -172,19 +201,36 @@ export function ChannelSummaryTable(props: ChannelSummaryTableProps) {
   ]
 
   return (
-    <div className='flex flex-col gap-3'>
+    <Tabs
+      value={filter.status}
+      onValueChange={(status) =>
+        setFilter({ ...filter, status: status as ChannelStatusFilter })
+      }
+      className='min-w-0 gap-3'
+    >
       <ChannelSummaryFilters value={filter} onChange={setFilter} />
-      <StaticDataTable
-        columns={columns}
-        data={rows}
-        getRowKey={(row) => row.id}
-        tableClassName='min-w-[900px]'
-        emptyContent={
-          props.rows.length > 0
-            ? t('No matching channels')
-            : t('No channels are in detection scope yet.')
-        }
+      <ChannelStatusTabs
+        counts={{
+          all: lists.all.length,
+          healthy: lists.healthy.length,
+          abnormal: lists.abnormal.length,
+          failed: lists.failed.length,
+          unrequested: lists.unrequested.length,
+        }}
       />
-    </div>
+      <TabsContent value={filter.status}>
+        <StaticDataTable
+          columns={columns}
+          data={lists[filter.status]}
+          getRowKey={(row) => row.id}
+          tableClassName='min-w-[900px]'
+          emptyContent={
+            props.rows.length > 0
+              ? t('No matching channels')
+              : t('No channels are in detection scope yet.')
+          }
+        />
+      </TabsContent>
+    </Tabs>
   )
 }

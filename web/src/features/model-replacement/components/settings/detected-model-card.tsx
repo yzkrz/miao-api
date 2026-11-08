@@ -189,7 +189,9 @@ export function DetectedModelCard(props: DetectedModelCardProps) {
         render={({ field }) => {
           const excluded = field.value ?? []
           const includedCount = props.channels.filter(
-            (channel) => !excluded.includes(channel.id)
+            (channel) =>
+              channel.status === CHANNEL_STATUS.ENABLED &&
+              !excluded.includes(channel.id)
           ).length
           return (
             <FormItem>
@@ -221,7 +223,7 @@ export function DetectedModelCard(props: DetectedModelCardProps) {
                       >
                         <Checkbox
                           id={checkboxId}
-                          checked={!excluded.includes(channel.id)}
+                          checked={!disabled && !excluded.includes(channel.id)}
                           disabled={disabled}
                           onCheckedChange={(checked) =>
                             field.onChange(

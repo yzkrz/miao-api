@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { Row } from '@tanstack/react-table'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -25,6 +26,7 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
 import type { User } from '../../types'
+import { DataTableRowActions } from '../data-table-row-actions'
 import { UsersMutateDrawer } from '../users-mutate-drawer'
 import { UsersProvider } from '../users-provider'
 
@@ -41,7 +43,7 @@ const target: User = {
 }
 const label = "View other accounts' audit logs"
 const description =
-  'View audit records from user and admin roles. Root records are always excluded.'
+  'View user and admin audit records, and manage their usage limits, concurrency, and window resets, including your own. Root accounts are excluded.'
 
 function renderPermissions(viewerRole: number, allowed?: boolean) {
   useAuthStore
@@ -194,4 +196,47 @@ it('admin cannot edit the audit permission even when the catalog is available', 
   renderPermissions(10)
   await screen.findByDisplayValue('Managed admin')
   expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument()
+})
+
+it.each([
+  { viewer: 10, targetRole: 10, targetId: 2, granted: true, allowed: true },
+  { viewer: 10, targetRole: 10, targetId: 1, granted: true, allowed: true },
+  { viewer: 10, targetRole: 100, targetId: 2, granted: true, allowed: false },
+  { viewer: 10, targetRole: 10, targetId: 2, granted: false, allowed: false },
+  { viewer: 10, targetRole: 1, targetId: 2, granted: false, allowed: true },
+  { viewer: 100, targetRole: 10, targetId: 2, granted: false, allowed: true },
+])('usage limits menu follows role and audit access: %j', async (testCase) => {
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'operator',
+    role: testCase.viewer,
+    permissions: { admin_permissions: { audit: { read: testCase.granted } } },
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <UsersProvider>
+        <DataTableRowActions
+          row={
+            {
+              original: {
+                ...target,
+                id: testCase.targetId,
+                role: testCase.targetRole,
+              },
+            } as Row<User>
+          }
+        />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+  const item = await screen.findByRole('menuitem', { name: 'Usage Limits' })
+  if (testCase.allowed) {
+    expect(item).not.toHaveAttribute('aria-disabled', 'true')
+  } else {
+    expect(item).toHaveAttribute('aria-disabled', 'true')
+  }
 })

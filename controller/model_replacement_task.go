@@ -499,7 +499,7 @@ func applyModelReplacementActions(snapshot *model.Channel, verdict string, actio
 			result.Changed = next != priority
 			priority = next
 		case operation_setting.ModelReplacementActionDecreasePriority:
-			next := max(priority-action.Amount, -limit)
+			next := max(priority-action.Amount, 0)
 			result.Changed = next != priority
 			priority = next
 		case operation_setting.ModelReplacementActionSetPriority:

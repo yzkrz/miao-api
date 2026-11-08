@@ -211,23 +211,6 @@ export function healthSeriesDomain(records: DetectionRecord[]): string[] {
 }
 
 /**
- * Splits channels by their latest detection result. Channels that were never
- * detected belong to neither list.
- */
-export function splitByLatestVerdict<
-  T extends { latest: DetectionRecord | null },
->(rows: T[]): { healthy: T[]; abnormal: T[] } {
-  const healthy: T[] = []
-  const abnormal: T[] = []
-  for (const row of rows) {
-    if (!row.latest) continue
-    if (row.latest.verdict === 'passed') healthy.push(row)
-    else abnormal.push(row)
-  }
-  return { healthy, abnormal }
-}
-
-/**
  * Channels whose latest detection covered the model; every channel when no
  * model is selected. Used to narrow the chart's channel choices.
  */
@@ -245,7 +228,8 @@ export type ChannelStatusFilter =
   | 'all'
   | 'healthy'
   | 'abnormal'
-  | 'auto_disabled'
+  | 'failed'
+  | 'unrequested'
 
 export type ChannelSummaryFilter = {
   /** Channel ID as typed, with or without a leading #; empty matches all. */
@@ -253,19 +237,21 @@ export type ChannelSummaryFilter = {
   status: ChannelStatusFilter
   /** Hides channels detected before but no longer in detection scope. */
   hideOutOfScope: boolean
+  hideDisabled: boolean
+  hideAutoDisabled: boolean
 }
 
 export const DEFAULT_CHANNEL_SUMMARY_FILTER: ChannelSummaryFilter = {
   channelId: '',
   status: 'all',
   hideOutOfScope: true,
+  hideDisabled: true,
+  hideAutoDisabled: true,
 }
 
 /**
- * Narrows the channel summary. Healthy and abnormal follow the result the
- * table shows for the selected model (the worst model when none is selected),
- * so a channel that has not been detected for it is neither; auto-disabled
- * follows the channel status.
+ * Narrows by current channel visibility and the latest detection result for
+ * the selected model. Request failures are separate from suspected replacements.
  */
 export function filterChannelSummary<
   T extends Pick<DetectionChannelRow, 'id' | 'status' | 'in_scope' | 'latest'>,
@@ -273,15 +259,43 @@ export function filterChannelSummary<
   const channelId = filter.channelId.trim().replace(/^#/, '')
   return rows.filter((row) => {
     if (filter.hideOutOfScope && !row.in_scope) return false
+    if (filter.hideDisabled && row.status === CHANNEL_STATUS.MANUAL_DISABLED) {
+      return false
+    }
+    if (
+      filter.hideAutoDisabled &&
+      row.status === CHANNEL_STATUS.AUTO_DISABLED
+    ) {
+      return false
+    }
     if (channelId && String(row.id) !== channelId) return false
     if (filter.status === 'all') return true
-    if (filter.status === 'auto_disabled') {
-      return row.status === CHANNEL_STATUS.AUTO_DISABLED
-    }
     const verdict = row.latest ? getRecordVerdict(row.latest, model) : null
-    if (!verdict) return false
-    return (verdict === 'passed') === (filter.status === 'healthy')
+    if (filter.status === 'unrequested') return verdict === null
+    if (filter.status === 'failed') return verdict === 'failed'
+    if (filter.status === 'healthy') return verdict === 'passed'
+    return verdict === 'replaced'
   })
+}
+
+/** Counts each in-scope channel once, including disabled and untested channels. */
+export function countChannelHealth(rows: DetectionChannelRow[]): {
+  healthy: number
+  total: number
+} {
+  const channels = new Map(
+    rows.filter((row) => row.in_scope).map((row) => [row.id, row])
+  )
+  let healthy = 0
+  for (const row of channels.values()) {
+    if (
+      row.status === CHANNEL_STATUS.ENABLED &&
+      row.latest?.verdict === 'passed'
+    ) {
+      healthy += 1
+    }
+  }
+  return { healthy, total: channels.size }
 }
 
 /** The chart's default date range: today in local time. */

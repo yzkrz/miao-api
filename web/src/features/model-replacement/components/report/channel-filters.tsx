@@ -28,26 +28,8 @@ import {
   InputGroupInput,
 } from '@/components/ui/input-group'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 
-import type {
-  ChannelStatusFilter,
-  ChannelSummaryFilter,
-} from '../../lib/report'
-
-const STATUS_OPTIONS: { value: ChannelStatusFilter; labelKey: string }[] = [
-  { value: 'all', labelKey: 'All statuses' },
-  { value: 'healthy', labelKey: 'Healthy channels' },
-  { value: 'abnormal', labelKey: 'Abnormal channels' },
-  { value: 'auto_disabled', labelKey: 'Auto Disabled' },
-]
+import type { ChannelSummaryFilter } from '../../lib/report'
 
 type HideOutOfScopeCheckboxProps = {
   checked: boolean
@@ -79,10 +61,7 @@ type ChannelSummaryFiltersProps = {
 
 export function ChannelSummaryFilters(props: ChannelSummaryFiltersProps) {
   const { t } = useTranslation()
-  const statusItems = STATUS_OPTIONS.map((option) => ({
-    value: option.value,
-    label: t(option.labelKey),
-  }))
+  const id = useId()
 
   return (
     <div className='flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center'>
@@ -111,32 +90,30 @@ export function ChannelSummaryFilters(props: ChannelSummaryFiltersProps) {
           </InputGroupAddon>
         )}
       </InputGroup>
-      <Select
-        items={statusItems}
-        value={props.value.status}
-        onValueChange={(status) =>
-          props.onChange({
-            ...props.value,
-            status: (status as ChannelStatusFilter | null) ?? 'all',
-          })
-        }
-      >
-        <SelectTrigger
-          className='w-full sm:w-44'
-          aria-label={t('Filter by status')}
-        >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent alignItemWithTrigger={false}>
-          <SelectGroup>
-            {statusItems.map((item) => (
-              <SelectItem key={item.value} value={item.value}>
-                {item.label}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
+      <div className='flex items-center gap-2'>
+        <Checkbox
+          id={`${id}-disabled`}
+          checked={props.value.hideDisabled}
+          onCheckedChange={(hideDisabled) =>
+            props.onChange({ ...props.value, hideDisabled })
+          }
+        />
+        <Label htmlFor={`${id}-disabled`} className='font-normal'>
+          {t('Hide disabled channels')}
+        </Label>
+      </div>
+      <div className='flex items-center gap-2'>
+        <Checkbox
+          id={`${id}-auto-disabled`}
+          checked={props.value.hideAutoDisabled}
+          onCheckedChange={(hideAutoDisabled) =>
+            props.onChange({ ...props.value, hideAutoDisabled })
+          }
+        />
+        <Label htmlFor={`${id}-auto-disabled`} className='font-normal'>
+          {t('Hide automatically disabled channels')}
+        </Label>
+      </div>
       <HideOutOfScopeCheckbox
         checked={props.value.hideOutOfScope}
         onCheckedChange={(hideOutOfScope) =>

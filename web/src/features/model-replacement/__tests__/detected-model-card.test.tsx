@@ -33,11 +33,12 @@ import type { DetectionChannel, ModelReplacementSettings } from '../types'
 const channels: DetectionChannel[] = [
   { id: 1, name: 'alpha', type: 1, status: 1, groups: ['default'] },
   { id: 2, name: 'beta', type: 1, status: 3, groups: ['default'] },
+  { id: 3, name: 'gamma', type: 1, status: 2, groups: ['default'] },
 ]
 
 let excludedChannelIds: number[] = []
 
-function Harness() {
+function Harness(props: { channels?: DetectionChannel[] }) {
   const form = useForm<ModelReplacementSettings>({
     defaultValues: {
       ...DEFAULT_MODEL_REPLACEMENT_SETTINGS,
@@ -50,7 +51,7 @@ function Harness() {
       <DetectedModelCard
         index={0}
         model='gpt-4o'
-        channels={channels}
+        channels={props.channels ?? channels}
         control={form.control}
         onRemove={() => undefined}
       />
@@ -59,7 +60,7 @@ function Harness() {
 }
 
 describe('DetectedModelCard channel list', () => {
-  it('checks every channel by default and disables channels that are not enabled', () => {
+  it('checks only enabled channels and leaves disabled channels unchecked', () => {
     render(<Harness />)
 
     const enabled = screen.getByRole('checkbox', { name: /alpha/ })
@@ -68,7 +69,13 @@ describe('DetectedModelCard channel list', () => {
     expect(enabled).toBeChecked()
     expect(enabled).toBeEnabled()
     expect(autoDisabled).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByText('2 of 2 selected')).toBeInTheDocument()
+    expect(autoDisabled).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /gamma/ })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /gamma/ })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    )
+    expect(screen.getByText('1 of 3 selected')).toBeInTheDocument()
   })
 
   it('records an unchecked channel as excluded', async () => {
@@ -79,6 +86,22 @@ describe('DetectedModelCard channel list', () => {
 
     expect(screen.getByRole('checkbox', { name: /alpha/ })).not.toBeChecked()
     expect(excludedChannelIds).toEqual([1])
-    expect(screen.getByText('1 of 2 selected')).toBeInTheDocument()
+    expect(screen.getByText('0 of 3 selected')).toBeInTheDocument()
+  })
+
+  it('restores selection when a disabled channel is enabled without changing explicit exclusions', async () => {
+    const user = userEvent.setup()
+    const view = render(<Harness />)
+    await user.click(screen.getByRole('checkbox', { name: /alpha/ }))
+    view.rerender(
+      <Harness
+        channels={channels.map((channel) => ({ ...channel, status: 1 }))}
+      />
+    )
+    expect(screen.getByRole('checkbox', { name: /alpha/ })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /beta/ })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /gamma/ })).toBeChecked()
+    expect(excludedChannelIds).toEqual([1])
+    expect(screen.getByText('2 of 3 selected')).toBeInTheDocument()
   })
 })

@@ -49,8 +49,14 @@ import {
 } from '@/components/ui/tooltip'
 import type { AdminUserManageAction } from '@/features/auth/secure-verification'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasPermission,
+} from '@/lib/admin-permissions'
 import { handleServerError } from '@/lib/handle-server-error'
 import { AuthOperationError } from '@/lib/secure-verification'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { manageUser, resetUserPasskey, resetUserTwoFA } from '../api'
 import {
@@ -79,6 +85,18 @@ interface DataTableRowActionsProps {
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
   const user = row.original
+  const operator = useAuthStore((state) => state.auth.user)
+  const canManageLimits =
+    !!operator &&
+    operator.role >= USER_ROLE.ADMIN &&
+    (operator.role === USER_ROLE.ROOT ||
+      operator.role > user.role ||
+      (user.role < USER_ROLE.ROOT &&
+        hasPermission(
+          operator,
+          ADMIN_PERMISSION_RESOURCES.AUDIT,
+          ADMIN_PERMISSION_ACTIONS.READ
+        )))
   const {
     setOpen,
     setCurrentRow,
@@ -283,6 +301,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             event.preventDefault()
             setLimitsDialogOpen(true)
           }}
+          disabled={!canManageLimits}
         >
           {t('Usage Limits')}
           <DropdownMenuShortcut>

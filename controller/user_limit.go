@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/authz"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -69,7 +70,14 @@ func loadLimitTargetUser(c *gin.Context) (*model.User, bool) {
 		common.ApiError(c, err)
 		return nil, false
 	}
-	if !canManageTargetRole(c.GetInt("role"), user.Role) {
+	role := c.GetInt("role")
+	canManage := role >= common.RoleAdminUser && canManageTargetRole(role, user.Role)
+	// Audit readers may manage limits (including their own) for any non-root
+	// account. Resolve the grant on every request so revocation is immediate.
+	if !canManage && role >= common.RoleAdminUser && user.Role < common.RoleRootUser {
+		canManage = authz.Can(c.GetInt("id"), role, authz.AuditRead)
+	}
+	if !canManage {
 		common.ApiErrorT(c, "No permission to access users of same or higher level")
 		return nil, false
 	}

@@ -22,12 +22,12 @@ import {
   aggregateHealthPoints,
   buildHealthPoints,
   channelsForModel,
+  countChannelHealth,
   DEFAULT_CHANNEL_SUMMARY_FILTER,
   filterChannelSummary,
   getRecordMatchPercent,
   getRecordVerdict,
   healthSeriesDomain,
-  splitByLatestVerdict,
   todayRange,
   type HealthPoint,
 } from '../lib/report'
@@ -143,22 +143,6 @@ describe('healthSeriesDomain', () => {
     ])
 
     expect(domain).toEqual(['#2 beta', '#9 zeta'])
-  })
-})
-
-describe('splitByLatestVerdict', () => {
-  it('puts passed channels in the healthy list, others in the abnormal list, and skips undetected ones', () => {
-    const rows = [
-      { id: 1, latest: record({ verdict: 'passed' }) },
-      { id: 2, latest: record({ verdict: 'replaced' }) },
-      { id: 3, latest: record({ verdict: 'failed' }) },
-      { id: 4, latest: null },
-    ]
-
-    const lists = splitByLatestVerdict(rows)
-
-    expect(lists.healthy.map((row) => row.id)).toEqual([1])
-    expect(lists.abnormal.map((row) => row.id)).toEqual([2, 3])
   })
 })
 
@@ -298,7 +282,7 @@ describe('filterChannelSummary', () => {
   it('hides channels no longer in detection scope by default and keeps them once the option is off', () => {
     expect(
       ids(filterChannelSummary(rows, DEFAULT_CHANNEL_SUMMARY_FILTER, null))
-    ).toEqual([1, 2, 12])
+    ).toEqual([1, 12])
     expect(
       ids(
         filterChannelSummary(
@@ -307,7 +291,7 @@ describe('filterChannelSummary', () => {
           null
         )
       )
-    ).toEqual([1, 2, 3, 12])
+    ).toEqual([1, 3, 12])
   })
 
   it('matches the typed channel ID exactly, with or without a leading #', () => {
@@ -330,7 +314,11 @@ describe('filterChannelSummary', () => {
       ids(
         filterChannelSummary(
           rows,
-          { ...DEFAULT_CHANNEL_SUMMARY_FILTER, status },
+          {
+            ...DEFAULT_CHANNEL_SUMMARY_FILTER,
+            status,
+            hideAutoDisabled: false,
+          },
           model
         )
       )
@@ -342,15 +330,74 @@ describe('filterChannelSummary', () => {
     expect(byStatus('abnormal', 'claude')).toEqual([1, 2])
   })
 
-  it('keeps only automatically disabled channels for the auto-disabled status', () => {
+  it('shows automatically disabled channels only when the hide option is cleared', () => {
     expect(
       ids(
         filterChannelSummary(
           rows,
-          { ...DEFAULT_CHANNEL_SUMMARY_FILTER, status: 'auto_disabled' },
+          { ...DEFAULT_CHANNEL_SUMMARY_FILTER, hideAutoDisabled: false },
+          null
+        )
+      )
+    ).toEqual([1, 2, 12])
+  })
+
+  it('counts the in-scope union including disabled and untested channels, but only enabled passing channels are healthy', () => {
+    const enabled = row({ id: 1 })
+    const counted = [
+      enabled,
+      row({ id: 2, status: 2 }),
+      row({ id: 3, status: 3 }),
+      row({ id: 4, latest: null }),
+      row({ id: 5, latest: record({ verdict: 'failed' }) }),
+      row({ id: 6, in_scope: false }),
+      enabled,
+    ]
+    expect(countChannelHealth(counted)).toEqual({ healthy: 1, total: 5 })
+    expect(countChannelHealth([])).toEqual({ healthy: 0, total: 0 })
+  })
+
+  it('separates failed requests, unrequested models and suspected replacements', () => {
+    const items = [
+      row({ id: 1, latest: record({ verdict: 'failed' }) }),
+      row({ id: 2, latest: record({ verdict: 'replaced' }) }),
+      row({ id: 3, latest: null }),
+    ]
+    expect(
+      ids(
+        filterChannelSummary(
+          items,
+          { ...DEFAULT_CHANNEL_SUMMARY_FILTER, status: 'failed' },
+          null
+        )
+      )
+    ).toEqual([1])
+    expect(
+      ids(
+        filterChannelSummary(
+          items,
+          { ...DEFAULT_CHANNEL_SUMMARY_FILTER, status: 'abnormal' },
           null
         )
       )
     ).toEqual([2])
+    expect(
+      ids(
+        filterChannelSummary(
+          items,
+          { ...DEFAULT_CHANNEL_SUMMARY_FILTER, status: 'unrequested' },
+          null
+        )
+      )
+    ).toEqual([3])
+    expect(
+      ids(
+        filterChannelSummary(
+          items,
+          { ...DEFAULT_CHANNEL_SUMMARY_FILTER, status: 'unrequested' },
+          'gemini'
+        )
+      )
+    ).toEqual([1, 2, 3])
   })
 })

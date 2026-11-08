@@ -37,9 +37,10 @@ import type { DetectionOverview } from '../../types'
 
 type OverviewCardsProps = {
   overview: DetectionOverview
-  /** Sizes of the healthy and abnormal lists, from each channel's latest result. */
+  /** Currently enabled channels whose latest detection passed. */
   healthyCount: number
-  abnormalCount: number
+  /** Union of channels serving configured models, excluding explicit exclusions. */
+  totalCount: number
   isStarting: boolean
   onRunNow: () => void
 }
@@ -51,9 +52,8 @@ export function OverviewCards(props: OverviewCardsProps) {
   const activeRun = props.overview.active_run
   const lastSummary = lastRun?.result
   const progress = activeRun?.state?.progress ?? 0
-  const detectedCount = props.healthyCount + props.abnormalCount
   const healthyPercent =
-    detectedCount > 0 ? (props.healthyCount / detectedCount) * 100 : null
+    props.totalCount > 0 ? (props.healthyCount / props.totalCount) * 100 : null
   const healthyPercentText =
     healthyPercent === null ? '-' : `${Math.round(healthyPercent)}%`
 
@@ -100,17 +100,21 @@ export function OverviewCards(props: OverviewCardsProps) {
               <p className='text-foreground text-sm font-medium'>
                 {t('Healthy share')}
               </p>
-              {detectedCount > 0 ? (
+              {props.totalCount > 0 ? (
                 <>
                   <p className='tabular-nums'>
-                    {t('{{count}} healthy', { count: props.healthyCount })}
+                    {t('{{count}} healthy and enabled', {
+                      count: props.healthyCount,
+                    })}
                   </p>
                   <p className='tabular-nums'>
-                    {t('{{count}} abnormal', { count: props.abnormalCount })}
+                    {t('{{count}} channels in detection scope', {
+                      count: props.totalCount,
+                    })}
                   </p>
                 </>
               ) : (
-                <p>{t('No channel has been detected yet.')}</p>
+                <p>{t('No channels are in detection scope yet.')}</p>
               )}
             </div>
           </CardContent>

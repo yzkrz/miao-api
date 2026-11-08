@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -30,6 +31,11 @@ import (
 
 func setupModelReplacementTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	if dialect := os.Getenv("TEST_MANAGE_USER_DIALECT"); dialect != "" && dialect != "sqlite" {
+		db := setupManageUserTestDB(t)
+		require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ModelReplacementRecord{}, &model.ModelReplacementAttempt{}))
+		return db
+	}
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -344,18 +350,22 @@ func TestApplyModelReplacementActions(t *testing.T) {
 
 	_, _, err = applyModelReplacementActions(reload(channel.Id), model.ModelReplacementVerdictReplaced, []operation_setting.ModelReplacementAction{
 		action(operation_setting.ModelReplacementActionRemoveTag, "", 0),
+		action(operation_setting.ModelReplacementActionDecreasePriority, "", 200),
+		action(operation_setting.ModelReplacementActionDecreasePriority, "", 1),
 		action(operation_setting.ModelReplacementActionSetWeight, "", 3),
 		action(operation_setting.ModelReplacementActionIncreaseWeight, "", operation_setting.ModelReplacementRoutingLimit),
 		action(operation_setting.ModelReplacementActionManualDisable, "", 0),
 	})
 	require.NoError(t, err)
 	updated = reload(channel.Id)
+	assert.Zero(t, updated.GetPriority(), "repeated priority decreases stop at zero")
 	assert.Empty(t, updated.GetTag())
 	assert.Equal(t, operation_setting.ModelReplacementRoutingLimit, updated.GetWeight(), "weight is capped")
 	assert.Equal(t, common.ChannelStatusManuallyDisabled, updated.Status)
 	assert.Equal(t, "Model replacement detection found a replaced model", updated.GetOtherInfo()["status_reason"])
 	for _, row := range abilities(channel.Id) {
 		assert.Nil(t, row.Tag)
+		assert.Zero(t, *row.Priority, "routing abilities inherit the priority floor")
 		assert.False(t, row.Enabled)
 	}
 
@@ -527,7 +537,7 @@ func TestModelReplacementDetectionProbesChannelsAndAppliesVerdicts(t *testing.T)
 	assert.Zero(t, channels[1].GetPriority())
 	for _, id := range []int{2, 3} {
 		assert.Equal(t, "default,abnormal", channels[id].Group, "fail actions run for replaced and failed channels")
-		assert.EqualValues(t, -10, channels[id].GetPriority())
+		assert.Zero(t, channels[id].GetPriority(), "failure actions cannot lower priority below zero")
 		assert.Equal(t, common.ChannelStatusEnabled, channels[id].Status, "no configured action disables the channel")
 	}
 	assert.Equal(t, "default,abnormal", channels[4].Group)

@@ -138,6 +138,29 @@ describe('ChannelSummaryTable actions', () => {
       })
     ).toBeDisabled()
   })
+
+  it('shows channel groups in their own column, including empty and long group lists', () => {
+    const group = 'long-group-name-'.repeat(12)
+    render(
+      <ChannelSummaryTable
+        rows={[
+          { ...rows[0], groups: ['default', group] },
+          { ...rows[1], groups: [] },
+        ]}
+        model={null}
+        onViewReport={vi.fn()}
+      />
+    )
+    expect(
+      screen.getByRole('columnheader', { name: 'Groups' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('cell', { name: `default, ${group}` })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('textbox', { name: 'Search by channel ID' })
+    ).toHaveAttribute('inputmode', 'numeric')
+  })
 })
 
 describe('ChannelSummaryTable filters', () => {
@@ -223,7 +246,7 @@ describe('ChannelSummaryTable filters', () => {
     expect(screen.getByText('No matching channels')).toBeInTheDocument()
   })
 
-  it('keeps only auto-disabled channels after choosing that status', async () => {
+  it('hides auto-disabled channels by default and restores them independently of result tabs', async () => {
     const user = userEvent.setup()
     render(
       <ChannelSummaryTable
@@ -233,13 +256,90 @@ describe('ChannelSummaryTable filters', () => {
       />
     )
 
-    await user.click(screen.getByRole('combobox', { name: 'Filter by status' }))
-    await user.click(
-      await screen.findByRole('option', { name: 'Auto Disabled' })
-    )
+    const hide = screen.getByRole('checkbox', {
+      name: 'Hide automatically disabled channels',
+    })
+    expect(hide).toBeChecked()
+    expect(screen.queryByText('paused')).not.toBeInTheDocument()
+    await user.click(hide)
+    await user.click(screen.getByRole('tab', { name: 'Abnormal channels (2)' }))
 
     expect(screen.getByText('paused')).toBeInTheDocument()
-    expect(screen.queryByText('upstream')).not.toBeInTheDocument()
+    expect(screen.getByText('upstream')).toBeInTheDocument()
     expect(screen.queryByText('fresh')).not.toBeInTheDocument()
+  })
+
+  it('separates request failures from replacements and channels not requested yet', async () => {
+    const user = userEvent.setup()
+    render(
+      <ChannelSummaryTable
+        rows={[
+          ...rows,
+          {
+            ...rows[0],
+            id: 11,
+            name: 'failed',
+            latest: { ...latest, verdict: 'failed' },
+          },
+        ]}
+        model={null}
+        onViewReport={vi.fn()}
+      />
+    )
+    expect(
+      screen.getByRole('tab', { name: 'All statuses (3)' })
+    ).toHaveAttribute('aria-selected', 'true')
+    await user.click(screen.getByRole('tab', { name: 'Request failed (1)' }))
+    expect(screen.getByText('failed')).toBeInTheDocument()
+    expect(screen.queryByText('upstream')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'Not requested yet (1)' }))
+    expect(screen.getByText('fresh')).toBeInTheDocument()
+    expect(screen.queryByText('failed')).not.toBeInTheDocument()
+  })
+
+  it('hides manually disabled channels by default without hiding enabled channels with the same latest result', async () => {
+    const user = userEvent.setup()
+    render(
+      <ChannelSummaryTable
+        rows={[...rows, { ...rows[0], id: 12, name: 'manual', status: 2 }]}
+        model={null}
+        onViewReport={vi.fn()}
+      />
+    )
+    const hide = screen.getByRole('checkbox', {
+      name: 'Hide disabled channels',
+    })
+    expect(hide).toBeChecked()
+    expect(screen.queryByText('manual')).not.toBeInTheDocument()
+    await user.click(hide)
+    expect(screen.getByText('manual')).toBeInTheDocument()
+    expect(
+      screen.getByRole('tab', { name: 'Abnormal channels (2)' })
+    ).toBeInTheDocument()
+  })
+
+  it('updates tab counts for the selected model and supports keyboard selection', async () => {
+    const user = userEvent.setup()
+    const view = render(
+      <ChannelSummaryTable rows={rows} model={null} onViewReport={vi.fn()} />
+    )
+    expect(
+      screen.getByRole('tab', { name: 'Abnormal channels (1)' })
+    ).toBeInTheDocument()
+    view.rerender(
+      <ChannelSummaryTable rows={rows} model='gpt-4o' onViewReport={vi.fn()} />
+    )
+    const all = screen.getByRole('tab', { name: 'All statuses (2)' })
+    await user.click(all)
+    await user.keyboard('{ArrowRight}{Enter}')
+    expect(
+      screen.getByRole('tab', { name: 'Healthy channels (1)' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('upstream')).toBeInTheDocument()
+    expect(screen.queryByText('fresh')).not.toBeInTheDocument()
+    expect(screen.getByRole('tabpanel')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('combobox', { name: 'Filter by status' })
+    ).not.toBeInTheDocument()
   })
 })
