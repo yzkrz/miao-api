@@ -124,11 +124,12 @@ type modelReplacementTarget struct {
 
 // selectModelReplacementTargets returns the enabled channels that serve at
 // least one detected model and are not excluded for it. Disabled channels are
-// skipped until the automatic recovery rules enable them again.
+// skipped by automatic runs; an explicit channel retest may probe them without
+// changing their disabled state.
 func selectModelReplacementTargets(setting operation_setting.ModelReplacementSetting, channels []*model.Channel, channelID int) []*modelReplacementTarget {
 	targets := make([]*modelReplacementTarget, 0)
 	for _, channel := range channels {
-		if channel == nil || channelID > 0 && channel.Id != channelID || channel.Status != common.ChannelStatusEnabled || slices.Contains(unsupportedTestChannelTypes, channel.Type) {
+		if channel == nil || channelID > 0 && channel.Id != channelID || channelID == 0 && channel.Status != common.ChannelStatusEnabled || slices.Contains(unsupportedTestChannelTypes, channel.Type) {
 			continue
 		}
 		channelModels := channel.GetModels()
@@ -166,7 +167,7 @@ func runModelReplacementDetection(ctx context.Context, runID string, manual bool
 
 	targets := selectModelReplacementTargets(setting, channels, channelID)
 	if channelID > 0 && len(targets) == 0 {
-		return summary, fmt.Errorf("channel #%d is not enabled or does not provide a configured detection model", channelID)
+		return summary, fmt.Errorf("channel #%d does not provide a configured detection model", channelID)
 	}
 	timeout := time.Duration(setting.TimeoutSeconds) * time.Second
 	total := len(targets) * setting.Rounds

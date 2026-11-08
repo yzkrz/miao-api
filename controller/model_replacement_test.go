@@ -33,7 +33,7 @@ func setupModelReplacementTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	if dialect := os.Getenv("TEST_MANAGE_USER_DIALECT"); dialect != "" && dialect != "sqlite" {
 		db := setupManageUserTestDB(t)
-		require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ModelReplacementRecord{}, &model.ModelReplacementAttempt{}))
+		require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ModelReplacementRecord{}, &model.ModelReplacementAttempt{}, &model.SystemTask{}))
 		return db
 	}
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -218,6 +218,7 @@ func TestSelectModelReplacementTargetsSkipsDisabledAndExcludedChannels(t *testin
 	require.Len(t, singleTarget, 1)
 	assert.Equal(t, 1, singleTarget[0].channel.Id)
 	assert.Empty(t, selectModelReplacementTargets(setting, channels, 5))
+	require.Len(t, selectModelReplacementTargets(setting, channels, 2), 1, "manual retests may probe disabled channels")
 }
 
 func TestModelReplacementNextRunResumesThePausedChannelTimer(t *testing.T) {
@@ -278,7 +279,14 @@ func TestRunModelReplacementChannelDetectionQueuesOnlyAnEligibleChannel(t *testi
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/model_replacement/channels/22/run", nil)
 	c.Params = gin.Params{{Key: "id", Value: "22"}}
 	RunModelReplacementChannelDetection(c)
-	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Equal(t, http.StatusConflict, recorder.Code, "a concurrent task prevents retesting even a disabled channel")
+	require.NoError(t, db.Model(&model.SystemTask{}).Where("task_id = ?", active.TaskID).Updates(map[string]any{"status": model.SystemTaskStatusSucceeded, "active_key": nil}).Error)
+	recorder = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/model_replacement/channels/22/run", nil)
+	c.Params = gin.Params{{Key: "id", Value: "22"}}
+	RunModelReplacementChannelDetection(c)
+	assert.Equal(t, http.StatusOK, recorder.Code)
 }
 
 func TestSummarizeModelReplacementAttempts(t *testing.T) {
@@ -633,4 +641,13 @@ func TestModelReplacementDetectionProbesChannelsAndAppliesVerdicts(t *testing.T)
 	require.Len(t, brokenAttempts, 1)
 	assert.Equal(t, 2, brokenAttempts[0].Tries)
 	assert.True(t, strings.Contains(brokenAttempts[0].ErrorMessage, "upstream exploded"), brokenAttempts[0].ErrorMessage)
+	retest, err := runModelReplacementDetection(context.Background(), "single-disabled", true, 4, func(int, int) {})
+	require.NoError(t, err)
+	assert.Equal(t, 1, retest.Channels)
+	assert.Equal(t, 1, retest.Passed)
+	assert.EqualValues(t, 2, disabledCalls.Load())
+	disabledChannel, err := model.GetChannelById(4, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, disabledChannel.Status)
+	assert.Equal(t, "default,abnormal", disabledChannel.Group, "manual retests do not modify disabled channel settings")
 }

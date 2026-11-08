@@ -226,7 +226,7 @@ func RunModelReplacementChannelDetection(c *gin.Context) {
 		return
 	}
 	if len(selectModelReplacementTargets(setting, []*model.Channel{channel}, channelID)) == 0 {
-		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Channel is disabled or does not provide a configured detection model"))
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("No channels are in detection scope yet."))
 		return
 	}
 	latestTask, err := model.GetLatestSystemTask(model.SystemTaskTypeModelReplacementDetection)

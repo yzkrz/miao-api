@@ -31,7 +31,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber, formatPercent } from '@/lib/format'
 
@@ -197,11 +196,7 @@ export function ChannelSummaryTable(props: ChannelSummaryTableProps) {
                   type='button'
                   variant='ghost'
                   size='icon-sm'
-                  disabled={
-                    props.isDetecting ||
-                    !row.in_scope ||
-                    row.status !== CHANNEL_STATUS.ENABLED
-                  }
+                  disabled={props.isDetecting || !row.in_scope}
                   onClick={() => props.onRetest?.(row.id)}
                   aria-label={t('Retest channel {{name}}', { name: row.name })}
                 />

@@ -157,7 +157,7 @@ describe('ChannelSummaryTable actions', () => {
     expect(onRetest).toHaveBeenCalledExactlyOnceWith(7)
   })
 
-  it('shows a retest action beside channels that cannot be tested but disables it', async () => {
+  it('allows disabled channels to be retested while keeping out-of-scope channels unavailable', async () => {
     const user = userEvent.setup()
     render(
       <ChannelSummaryTable
@@ -183,7 +183,7 @@ describe('ChannelSummaryTable actions', () => {
     )
     expect(
       screen.getByRole('button', { name: 'Retest channel upstream' })
-    ).toBeDisabled()
+    ).toBeEnabled()
     expect(
       screen.getByRole('button', { name: 'Retest channel fresh' })
     ).toBeDisabled()
