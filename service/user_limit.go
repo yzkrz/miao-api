@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
@@ -129,19 +131,60 @@ func CheckUserUsageLimit(c *gin.Context, userId int, pendingQuota int64, modelNa
 		return nil
 	}
 	c.Header("Retry-After", strconv.FormatInt(max(blocking.ResetAt-now, 1), 10))
-	var message string
-	if blocking.Mode == "calendar" {
-		message = i18n.T(c, i18n.MsgUserUsageLimitReachedCalendar)
-	} else if blocking.WindowSeconds%86400 == 0 {
-		message = i18n.T(c, i18n.MsgUserUsageLimitReachedDays, map[string]any{"Count": blocking.WindowSeconds / 86400})
-	} else {
-		message = i18n.T(c, i18n.MsgUserUsageLimitReachedHours, map[string]any{"Count": blocking.WindowSeconds / 3600})
-	}
 	return types.NewErrorWithStatusCode(
-		errors.New(message),
+		errors.New(userUsageLimitMessage(c, *blocking, now)),
 		types.ErrorCodeUserUsageLimitReached,
 		http.StatusTooManyRequests,
 		types.ErrOptionWithSkipRetry(),
 		types.ErrOptionWithNoRecordErrorLog(),
 	)
+}
+
+func userUsageLimitMessage(c *gin.Context, status UserUsageRuleStatus, now int64) string {
+	lang := i18n.StatedLang(c)
+	limitKey := i18n.MsgUserUsageLimitReachedHours
+	count := status.WindowSeconds / 3600
+	if status.Mode == "calendar" {
+		limitKey = i18n.MsgUserUsageLimitReachedCalendar
+		switch status.CalendarPeriod {
+		case "day":
+			limitKey = i18n.MsgUserUsageLimitReachedCalendarDay
+		case "week":
+			limitKey = i18n.MsgUserUsageLimitReachedCalendarWeek
+		case "month":
+			limitKey = i18n.MsgUserUsageLimitReachedCalendarMonth
+		case "quarter":
+			limitKey = i18n.MsgUserUsageLimitReachedCalendarQuarter
+		case "year":
+			limitKey = i18n.MsgUserUsageLimitReachedCalendarYear
+		}
+	} else if status.WindowSeconds%86400 == 0 {
+		limitKey = i18n.MsgUserUsageLimitReachedDays
+		count = status.WindowSeconds / 86400
+	}
+	limit := i18n.Translate(lang, limitKey, map[string]any{"Count": count})
+
+	// Round waiting times up so the displayed delay never suggests an early retry.
+	minutes := (max(status.ResetAt-now, 1) + 59) / 60
+	var parts []string
+	if minutes >= 24*60 {
+		hours := (minutes + 59) / 60
+		parts = append(parts, i18n.Translate(lang, i18n.MsgUserUsageLimitDurationDays, map[string]any{"Count": hours / 24}))
+		if hours%24 > 0 {
+			parts = append(parts, i18n.Translate(lang, i18n.MsgUserUsageLimitDurationHours, map[string]any{"Count": hours % 24}))
+		}
+	} else {
+		if minutes >= 60 {
+			parts = append(parts, i18n.Translate(lang, i18n.MsgUserUsageLimitDurationHours, map[string]any{"Count": minutes / 60}))
+		}
+		if minutes%60 > 0 {
+			parts = append(parts, i18n.Translate(lang, i18n.MsgUserUsageLimitDurationMinutes, map[string]any{"Count": minutes % 60}))
+		}
+	}
+	// Convert after rounding: a DST transition can change the reset time's offset.
+	resetTime := time.Unix(status.ResetAt, 0).Add(59 * time.Second).Truncate(time.Minute).
+		In(time.Local).Format("2006-01-02 15:04 UTC-07:00")
+	return i18n.Translate(lang, i18n.MsgUserUsageLimitResetDetails, map[string]any{
+		"Limit": limit, "Duration": strings.Join(parts, " "), "ResetAt": resetTime,
+	})
 }
