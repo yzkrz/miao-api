@@ -889,6 +889,7 @@ func TestUserLimitsAuditPermissionAllowsNonRootTargets(t *testing.T) {
 		{ResetUserLimitWindows, http.MethodPost, `{}`},
 	} {
 		assert.False(t, performUserLimitsRequest(t, op.handler, op.method, root.Id, common.RoleAdminUser, op.body).Success, "audit grant cannot manage root")
+		assert.False(t, performUserLimitsRequest(t, op.handler, op.method, root.Id, common.RoleRootUser, op.body).Success, "root targets cannot have limits managed")
 		assert.False(t, performUserLimitsRequest(t, op.handler, op.method, admin.Id, common.RoleCommonUser, op.body).Success, "a grant cannot bypass the administrator requirement")
 	}
 	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: false}}))

@@ -76,7 +76,7 @@ func loadLimitTargetUser(c *gin.Context) (*model.User, bool) {
 		return nil, false
 	}
 	role := c.GetInt("role")
-	canManage := role >= common.RoleAdminUser && canManageTargetRole(role, user.Role)
+	canManage := role >= common.RoleAdminUser && user.Role < common.RoleRootUser && canManageTargetRole(role, user.Role)
 	// Audit readers may manage limits (including their own) for any non-root
 	// account. Resolve the grant on every request so revocation is immediate.
 	if !canManage && role >= common.RoleAdminUser && user.Role < common.RoleRootUser {

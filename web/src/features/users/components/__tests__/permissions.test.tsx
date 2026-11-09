@@ -18,7 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { Row } from '@tanstack/react-table'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 
@@ -206,13 +213,16 @@ it.each([
   { viewer: 10, targetRole: 1, targetId: 2, granted: false, allowed: true },
   { viewer: 100, targetRole: 10, targetId: 2, granted: false, allowed: true },
   { viewer: 1, targetRole: 1, targetId: 2, granted: true, allowed: false },
-  { viewer: 100, targetRole: 100, targetId: 1, granted: true, allowed: true },
+  { viewer: 100, targetRole: 100, targetId: 1, granted: true, allowed: false },
 ])('usage limits menu follows role and audit access: %j', async (testCase) => {
   useAuthStore.getState().auth.setUser({
     id: 1,
     username: 'operator',
     role: testCase.viewer,
     permissions: { admin_permissions: { audit: { read: testCase.granted } } },
+  })
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: useAuthStore.getState().auth.user },
   })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -252,3 +262,158 @@ it.each([
     expect(keys).toHaveAttribute('aria-disabled', 'true')
   }
 })
+
+it.each([
+  { id: 2, role: 10, name: 'peer administrator' },
+  { id: 3, role: 1, name: 'ordinary user' },
+  { id: 1, role: 10, name: 'self' },
+])(
+  'refreshes an audit grant before editing limits for $name',
+  async (targetUser) => {
+    const user = userEvent.setup()
+    const operator = {
+      id: 1,
+      username: 'operator',
+      role: 10,
+      permissions: { admin_permissions: { audit: { read: false } } },
+    }
+    useAuthStore.getState().auth.setUser(operator)
+    const limits = {
+      max_concurrency: 2,
+      current_concurrency: 0,
+      updated_at: 0,
+      usage_rules: [],
+    }
+    const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === '/api/user/self') {
+        return {
+          data: {
+            success: true,
+            data: {
+              ...operator,
+              permissions: { admin_permissions: { audit: { read: true } } },
+            },
+          },
+        }
+      }
+      return {
+        data: {
+          success: true,
+          data: String(url).endsWith('/models') ? [] : limits,
+        },
+      }
+    })
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true, data: limits } })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <UsersProvider>
+          <DataTableRowActions
+            row={
+              {
+                original: {
+                  ...target,
+                  id: targetUser.id,
+                  role: targetUser.role,
+                },
+              } as Row<User>
+            }
+          />
+        </UsersProvider>
+      </QueryClientProvider>
+    )
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    const item = await screen.findByRole('menuitem', { name: 'Usage Limits' })
+    await waitFor(() =>
+      expect(item).not.toHaveAttribute('aria-disabled', 'true')
+    )
+    expect(get).toHaveBeenCalledWith('/api/user/self', expect.anything())
+    await user.click(item)
+    const concurrency = await screen.findByRole('spinbutton', {
+      name: 'Maximum concurrency',
+    })
+    fireEvent.change(concurrency, { target: { value: '4' } })
+    await user.click(screen.getByRole('button', { name: 'Add rule' }))
+    await user.type(screen.getByRole('spinbutton', { name: /Quota/ }), '3')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith(
+        `/api/user/${targetUser.id}/limits`,
+        expect.objectContaining({
+          max_concurrency: 4,
+          usage_rules: [
+            expect.objectContaining({ window_seconds: 18000, enabled: true }),
+          ],
+        })
+      )
+    )
+    client.clear()
+  }
+)
+
+it.each(['revoked grant', 'changed account'] as const)(
+  'does not keep stale permission after %s while refreshing the menu',
+  async (scenario) => {
+    const operator = {
+      id: 1,
+      username: 'operator',
+      role: 10,
+      permissions: { admin_permissions: { audit: { read: true } } },
+    }
+    useAuthStore.getState().auth.setUser(operator)
+    let finish!: (result: {
+      data: { success: boolean; data: typeof operator }
+    }) => void
+    vi.spyOn(api, 'get').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <UsersProvider>
+          <DataTableRowActions row={{ original: target } as Row<User>} />
+        </UsersProvider>
+      </QueryClientProvider>
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+    await waitFor(() => expect(finish).toBeDefined())
+    await act(async () => {
+      if (scenario === 'changed account') {
+        useAuthStore
+          .getState()
+          .auth.setUser({ id: 3, username: 'other-admin', role: 10 })
+      }
+      finish({
+        data: {
+          success: true,
+          data: {
+            ...operator,
+            permissions: {
+              admin_permissions: {
+                audit: { read: scenario === 'changed account' },
+              },
+            },
+          },
+        },
+      })
+    })
+    await waitFor(() =>
+      expect(
+        screen.getByRole('menuitem', { name: 'Usage Limits' })
+      ).toHaveAttribute('aria-disabled', 'true')
+    )
+    expect(useAuthStore.getState().auth.user?.id).toBe(
+      scenario === 'changed account' ? 3 : 1
+    )
+    client.clear()
+  }
+)

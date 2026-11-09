@@ -99,6 +99,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const canManageLimits =
     !!operator &&
     operator.role >= USER_ROLE.ADMIN &&
+    user.role < USER_ROLE.ROOT &&
     (operator.role === USER_ROLE.ROOT ||
       operator.role > user.role ||
       (user.role < USER_ROLE.ROOT &&
@@ -111,6 +112,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     setOpen,
     setCurrentRow,
     triggerRefresh,
+    refreshOperatorPermissions,
     requestVerification,
     verificationActive,
   } = useUsers()
@@ -245,6 +247,9 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
       <DataTableRowActionMenu
         ariaLabel={t('Open menu')}
         contentClassName='w-48'
+        onOpenChange={(open) => {
+          if (open) void refreshOperatorPermissions()
+        }}
       >
         {isDisabled ? (
           <DropdownMenuItem onClick={() => handleManage('enable')}>
@@ -308,10 +313,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         </DropdownMenuItem>
 
         <DropdownMenuItem
-          onSelect={(event) => {
-            event.preventDefault()
-            setLimitsDialogOpen(true)
-          }}
+          onClick={() => setLimitsDialogOpen(true)}
           disabled={!canManageLimits}
         >
           {t('Usage Limits')}
@@ -411,7 +413,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
       />
 
       <UserLimitsDialog
-        open={limitsDialogOpen}
+        open={limitsDialogOpen && canManageLimits}
         onOpenChange={setLimitsDialogOpen}
         user={{ id: user.id, username: user.username }}
       />
