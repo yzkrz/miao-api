@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -33,6 +34,162 @@ type tokenAPIResponse struct {
 	Success bool            `json:"success"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data"`
+}
+
+func TestAdminUserTokens(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.Ability{}))
+	previousMaster := common.IsMasterNode
+	common.IsMasterNode = true
+	t.Cleanup(func() { common.IsMasterNode = previousMaster })
+	logDB := model.LOG_DB
+	t.Setenv("LOG_SQL_DSN", "")
+	require.NoError(t, model.InitLogDB())
+	model.LOG_DB = logDB
+	require.NoError(t, authz.Init(db))
+	operator := createQuotaTestOperator(t, db, common.RoleAdminUser)
+	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: true}}))
+	require.NoError(t, model.PublishUserAuthCache(operator.Id))
+	bundle, err := service.CreateLoginSession(operator.Id, "password", "127.0.0.1", "admin-tokens-test")
+	require.NoError(t, err)
+	identity, err := service.ParseAccessToken(bundle.AccessToken)
+	require.NoError(t, err)
+	target := model.User{Username: "target", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "target"}
+	other := model.User{Username: "other", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "other"}
+	root := model.User{Username: "protected-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AffCode: "protected-root"}
+	require.NoError(t, db.Create(&target).Error)
+	require.NoError(t, db.Create(&other).Error)
+	require.NoError(t, db.Create(&root).Error)
+	owned := seedToken(t, db, target.Id, "owned", "owned-secret-0123456789")
+	foreign := seedToken(t, db, other.Id, "foreign", "foreign-secret-0123456789")
+
+	router := gin.New()
+	router.Use(middleware.RequestId())
+	routes := router.Group("/api/user/:id/tokens", middleware.AdminAuth(), middleware.DisableCache(), middleware.TokenOperationAudit(), AuthorizeUserTokenManagement)
+	routes.GET("/", GetAllTokens)
+	routes.GET("/search", SearchTokens)
+	routes.GET("/models", GetUserModels)
+	routes.GET("/groups", GetUserGroups)
+	routes.GET("/auto-groups", GetTokenAutoGroups)
+	routes.GET("/:token_id", GetToken)
+	routes.POST("/", AddToken)
+	routes.POST("/batch/create", AddUserTokensBatch)
+	routes.PUT("/", UpdateToken)
+	routes.DELETE("/:token_id", DeleteToken)
+	routes.POST("/:token_id/key", GetTokenKey)
+	routes.POST("/batch", DeleteTokenBatch)
+	routes.POST("/batch/keys", GetTokenKeysBatch)
+	request := func(method string, userID int, suffix, body, proof string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, fmt.Sprintf("/api/user/%d/tokens%s", userID, suffix), strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+bundle.AccessToken)
+		req.Header.Set("Content-Type", "application/json")
+		if proof != "" {
+			req.Header.Set("X-Security-Proof", proof)
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		return response
+	}
+	proofFor := func(userID int, action string, ids []int, count int) string {
+		if ids == nil {
+			ids = []int{}
+		}
+		context, err := common.Marshal(service.AdminUserTokensContext{UserID: userID, Action: action, TokenIDs: ids, Count: count})
+		require.NoError(t, err)
+		binding, err := service.BindVerificationOperation(service.VerificationOperation{Scope: service.VerificationScopeAdminUserTokens, Context: context})
+		require.NoError(t, err)
+		proof, _, err := service.IssueSecurityProof(identity, service.VerificationMethodPassword, binding)
+		require.NoError(t, err)
+		return proof
+	}
+	for _, ownerID := range []int{target.Id, other.Id, operator.Id} {
+		response := request("GET", ownerID, "/", "", "")
+		assert.Equal(t, 200, response.Code)
+		assert.Contains(t, response.Body.String(), `"success":true`)
+		assert.NotContains(t, response.Body.String(), owned.Key)
+		assert.NotContains(t, response.Body.String(), foreign.Key)
+	}
+	assert.Equal(t, http.StatusForbidden, request("GET", root.Id, "/", "", "").Code)
+	for _, suffix := range []string{"/search?keyword=owned", "/models", "/groups", "/auto-groups", fmt.Sprintf("/%d", owned.Id)} {
+		response := request("GET", target.Id, suffix, "", "")
+		assert.Contains(t, response.Body.String(), `"success":true`, suffix)
+	}
+	assert.Contains(t, request("GET", target.Id, fmt.Sprintf("/%d", foreign.Id), "", "").Body.String(), `"success":false`)
+	keyPath := fmt.Sprintf("/%d/key", owned.Id)
+	assert.Equal(t, 403, request("POST", target.Id, keyPath, "", "").Code)
+	for _, invalid := range []string{
+		proofFor(other.Id, "reveal", []int{owned.Id}, 0),
+		proofFor(target.Id, "delete", []int{owned.Id}, 0),
+		proofFor(target.Id, "reveal", []int{foreign.Id}, 0),
+	} {
+		response := request("POST", target.Id, keyPath, "", invalid)
+		assert.Equal(t, 403, response.Code)
+		assert.NotContains(t, response.Body.String(), owned.Key)
+	}
+	proof := proofFor(target.Id, "reveal", []int{owned.Id}, 0)
+	response := request("POST", target.Id, keyPath, "", proof)
+	assert.Contains(t, response.Body.String(), owned.Key)
+	assert.Contains(t, response.Header().Get("Cache-Control"), "no-store")
+	assert.Equal(t, 403, request("POST", target.Id, keyPath, "", proof).Code, "proof cannot be replayed")
+	proof = proofFor(target.Id, "reveal", []int{owned.Id}, 0)
+	require.NoError(t, db.Model(&model.AuthFlow{}).Where("user_id = ? AND purpose = ?", operator.Id, model.AuthFlowPurposeSecurityProof).Update("expires_at", time.Now().Add(-time.Minute)).Error)
+	assert.Equal(t, 403, request("POST", target.Id, keyPath, "", proof).Code, "expired proof cannot disclose a key")
+
+	response = request("POST", target.Id, "/", `{"name":"created","user_id":1,"unlimited_quota":true,"expired_time":-1}`, proofFor(target.Id, "create", nil, 1))
+	assert.Contains(t, response.Body.String(), `"success":true`)
+	var created model.Token
+	require.NoError(t, db.Where("name = ?", "created").First(&created).Error)
+	assert.Equal(t, target.Id, created.UserId)
+	response = request("PUT", target.Id, "/", fmt.Sprintf(`{"id":%d,"name":"edited","unlimited_quota":true,"expired_time":-1,"model_limits_enabled":true,"model_limits":"alpha"}`, created.Id), proofFor(target.Id, "update", []int{created.Id}, 0))
+	assert.Contains(t, response.Body.String(), `"success":true`)
+	response = request("PUT", target.Id, "/?status_only=true", fmt.Sprintf(`{"id":%d,"status":2}`, created.Id), proofFor(target.Id, "status", []int{created.Id}, 0))
+	assert.Contains(t, response.Body.String(), `"status":2`)
+	response = request("PUT", target.Id, "/", fmt.Sprintf(`{"id":%d,"name":"forged","unlimited_quota":true}`, foreign.Id), proofFor(target.Id, "update", []int{foreign.Id}, 0))
+	assert.Contains(t, response.Body.String(), `"success":false`)
+	batch := `{"tokens":[{"name":"batch-one","unlimited_quota":true},{"name":"batch-two","unlimited_quota":true}]}`
+	assert.Equal(t, 403, request("POST", target.Id, "/batch/create", batch, proofFor(target.Id, "create", nil, 1)).Code)
+	response = request("POST", target.Id, "/batch/create", batch, proofFor(target.Id, "create", nil, 2))
+	assert.Contains(t, response.Body.String(), `"count":2`)
+	badBatch := `{"tokens":[{"name":"must-rollback","unlimited_quota":true},{"name":"bad","remain_quota":-1}]}`
+	assert.Contains(t, request("POST", target.Id, "/batch/create", badBatch, proofFor(target.Id, "create", nil, 2)).Body.String(), `"success":false`)
+	var count int64
+	require.NoError(t, db.Model(&model.Token{}).Where("name = ?", "must-rollback").Count(&count).Error)
+	assert.Zero(t, count)
+	ids := []int{created.Id, foreign.Id}
+	batchBody := fmt.Sprintf(`{"ids":[%d,%d]}`, created.Id, foreign.Id)
+	response = request("POST", target.Id, "/batch/keys", batchBody, proofFor(target.Id, "reveal_batch", ids, 0))
+	assert.Contains(t, response.Body.String(), created.Key)
+	assert.NotContains(t, response.Body.String(), foreign.Key)
+	response = request("POST", target.Id, "/batch", batchBody, proofFor(target.Id, "delete_batch", ids, 0))
+	assert.Contains(t, response.Body.String(), `"data":1`)
+	require.NoError(t, db.First(&model.Token{}, foreign.Id).Error)
+	response = request("DELETE", target.Id, fmt.Sprintf("/%d", owned.Id), "", proofFor(target.Id, "delete", []int{owned.Id}, 0))
+	assert.Contains(t, response.Body.String(), `"success":true`)
+
+	var audits []model.AuditLog
+	require.NoError(t, model.LOG_DB.Where("category = ?", model.AuditCategorySecurity).Find(&audits).Error)
+	require.NotEmpty(t, audits)
+	for _, audit := range audits {
+		assert.Equal(t, operator.Id, audit.UserId)
+		encoded, err := common.Marshal(audit)
+		require.NoError(t, err)
+		for _, secret := range []string{owned.Key, foreign.Key, created.Key, bundle.AccessToken, proof} {
+			assert.NotContains(t, string(encoded), secret)
+		}
+		require.NotNil(t, audit.Other.Op)
+		assert.NotEmpty(t, audit.Other.Op.Params["user_id"])
+	}
+	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: false}}))
+	assert.Equal(t, 403, request("GET", target.Id, "/", "", "").Code, "permission revocation applies immediately")
+	assert.Equal(t, 403, request("POST", target.Id, "/", `{"name":"revoked","unlimited_quota":true}`, proofFor(target.Id, "create", nil, 1)).Code)
+	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: true}}))
+	require.NoError(t, db.Model(&operator).Update("role", common.RoleCommonUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(operator.Id))
+	assert.Equal(t, 403, request("GET", target.Id, "/", "", "").Code, "an audit grant does not bypass the administrator requirement")
+	require.NoError(t, db.Model(&operator).Update("role", common.RoleAdminUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(operator.Id))
+	require.NoError(t, db.Model(&model.UserSession{}).Where("sid = ?", identity.SessionID).Update("status", model.UserSessionStatusRevoked).Error)
+	assert.Equal(t, 401, request("GET", target.Id, "/", "", "").Code, "revoked sessions cannot manage keys")
 }
 
 type tokenPageResponse struct {

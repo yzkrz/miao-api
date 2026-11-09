@@ -16,17 +16,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import React, { useState, useCallback, useRef, useEffect } from 'react'
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import {
+  SecureVerificationDialog,
+  useSecureVerification,
+} from '@/features/auth/secure-verification'
 import useDialogState from '@/hooks/use-dialog'
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { fetchTokenKey, fetchTokenKeysBatch } from '../api'
+import { fetchTokenKey, fetchTokenKeysBatch, type ApiKeysScope } from '../api'
 import { ERROR_MESSAGES } from '../constants'
 import type { ApiKey, ApiKeysDialogType } from '../types'
 
 type ApiKeysContextType = {
+  scope?: ApiKeysScope
+  verificationActive: boolean
   open: ApiKeysDialogType | null
   setOpen: (str: ApiKeysDialogType | null) => void
   currentRow: ApiKey | null
@@ -45,8 +51,39 @@ type ApiKeysContextType = {
 
 const ApiKeysContext = React.createContext<ApiKeysContextType | null>(null)
 
-export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
+type ApiKeysProviderProps = {
+  children: React.ReactNode
+  owner?: { id: number; username: string }
+}
+
+export function ApiKeysProvider(props: ApiKeysProviderProps) {
+  return <ApiKeysSession key={props.owner?.id ?? 'self'} {...props} />
+}
+
+function ApiKeysSession(props: ApiKeysProviderProps) {
   const { t } = useTranslation()
+  const verification = useSecureVerification()
+  const requestVerification = verification.requestVerification
+  const ownerId = props.owner?.id
+  const ownerName = props.owner?.username
+  const scope = useMemo<ApiKeysScope | undefined>(() => {
+    if (ownerId === undefined) return undefined
+    return {
+      userId: ownerId,
+      authorize: async (action, tokenIds, count = 0) => {
+        const proof = await requestVerification({
+          scope: 'admin.user.tokens',
+          context: { user_id: ownerId, action, token_ids: tokenIds, count },
+          title: t('Verify API key management'),
+          description: t(
+            'Confirm your identity before managing API keys for {{username}}.',
+            { username: ownerName }
+          ),
+        })
+        return proof?.proof_token ?? null
+      },
+    }
+  }, [ownerId, ownerName, requestVerification, t])
   const [open, setOpen] = useDialogState<ApiKeysDialogType>(null)
   const [currentRow, setCurrentRow] = useState<ApiKey | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
@@ -55,12 +92,17 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
   const [resolvedKeys, setResolvedKeys] = useState<Record<number, string>>({})
   const [loadingKeys, setLoadingKeys] = useState<Record<number, boolean>>({})
   const pendingRequests = useRef<Record<number, Promise<string | null>>>({})
+  const active = useRef(true)
 
   const [copiedKeyId, setCopiedKeyId] = useState<number | null>(null)
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   useEffect(() => {
-    return () => clearTimeout(copiedTimerRef.current)
+    active.current = true
+    return () => {
+      active.current = false
+      clearTimeout(copiedTimerRef.current)
+    }
   }, [])
 
   const markKeyCopied = useCallback((id: number) => {
@@ -70,6 +112,8 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const triggerRefresh = useCallback(() => {
+    setResolvedKeys({})
+    setResolvedKey('')
     setRefreshTrigger((prev) => prev + 1)
   }, [])
 
@@ -81,7 +125,8 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
       const request = (async () => {
         setLoadingKeys((prev) => ({ ...prev, [id]: true }))
         try {
-          const res = await fetchTokenKey(id)
+          const res = await fetchTokenKey(id, scope)
+          if (!active.current) return null
           if (res.success && res.data?.key) {
             const fullKey = `sk-${res.data.key}`
             setResolvedKeys((prev) => ({ ...prev, [id]: fullKey }))
@@ -105,7 +150,7 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
       pendingRequests.current[id] = request
       return request
     },
-    [resolvedKeys, t]
+    [resolvedKeys, scope, t]
   )
 
   const resolveRealKeysBatch = useCallback(
@@ -122,7 +167,8 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        const res = await fetchTokenKeysBatch(uncachedIds)
+        const res = await fetchTokenKeysBatch(uncachedIds, scope)
+        if (!active.current) return {}
         if (res.success && res.data?.keys) {
           const newKeys: Record<number, string> = {}
           for (const [idStr, key] of Object.entries(res.data.keys)) {
@@ -151,12 +197,14 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [resolvedKeys, t]
+    [resolvedKeys, scope, t]
   )
 
   return (
     <ApiKeysContext
       value={{
+        scope,
+        verificationActive: verification.isActive,
         open,
         setOpen,
         currentRow,
@@ -173,7 +221,8 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
         markKeyCopied,
       }}
     >
-      {children}
+      {props.children}
+      <SecureVerificationDialog {...verification.dialogProps} />
     </ApiKeysContext>
   )
 }

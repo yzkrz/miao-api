@@ -45,6 +45,7 @@ const (
 	VerificationScopeAdminUserPasskeyReset = "admin.user.passkey.reset"
 	VerificationScopeAdminUserTwoFADisable = "admin.user.2fa.disable"
 	VerificationScopeAdminUserBindingClear = "admin.user.binding.clear"
+	VerificationScopeAdminUserTokens       = "admin.user.tokens"
 	verificationScopeAdminUserPrefix       = "admin.user."
 )
 
@@ -89,6 +90,13 @@ type AdminUserContext struct {
 type AdminUserManageContext struct {
 	UserID int    `json:"user_id"`
 	Action string `json:"action"`
+}
+
+type AdminUserTokensContext struct {
+	UserID   int    `json:"user_id"`
+	Action   string `json:"action"`
+	TokenIDs []int  `json:"token_ids"`
+	Count    int    `json:"count"`
 }
 
 // AdminUserBindingContext names exactly one binding: a built-in binding type
@@ -207,6 +215,38 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	case VerificationScopeAdminUserManage:
 		var context AdminUserManageContext
 		if len(fields) != 2 || common.Unmarshal(operation.Context, &context) != nil || context.UserID <= 0 || !slices.Contains(adminUserManageActions, context.Action) {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		normalized = context
+	case VerificationScopeAdminUserTokens:
+		var context AdminUserTokensContext
+		if len(fields) != 4 || common.Unmarshal(operation.Context, &context) != nil || context.UserID <= 0 || len(context.TokenIDs) > 1000 {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		slices.Sort(context.TokenIDs)
+		context.TokenIDs = slices.Compact(context.TokenIDs)
+		if context.TokenIDs == nil {
+			context.TokenIDs = []int{}
+		}
+		for _, id := range context.TokenIDs {
+			if id <= 0 {
+				return VerificationBinding{}, ErrVerificationContextInvalid
+			}
+		}
+		switch context.Action {
+		case "create":
+			if len(context.TokenIDs) != 0 || context.Count < 1 || context.Count > 100 {
+				return VerificationBinding{}, ErrVerificationContextInvalid
+			}
+		case "update", "status", "delete", "reveal":
+			if len(context.TokenIDs) != 1 || context.Count != 0 {
+				return VerificationBinding{}, ErrVerificationContextInvalid
+			}
+		case "delete_batch", "reveal_batch":
+			if len(context.TokenIDs) == 0 || context.Count != 0 {
+				return VerificationBinding{}, ErrVerificationContextInvalid
+			}
+		default:
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
 		normalized = context
@@ -330,7 +370,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 		VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 		VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
-		VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear:
+		VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear, VerificationScopeAdminUserTokens:
 		if scope == VerificationScopeAccountDelete && state.Role == common.RoleRootUser {
 			return nil, ErrVerificationForbidden
 		}
@@ -395,7 +435,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 			case VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 				VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 				VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
-				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear:
+				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear, VerificationScopeAdminUserTokens:
 				methods[i].Available, methods[i].Reason = false, "Password authentication is disabled."
 			}
 		}

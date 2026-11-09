@@ -67,6 +67,7 @@ import {
 } from '../constants'
 import { getUserActionMessage } from '../lib'
 import type { User } from '../types'
+import { UserApiKeysDrawer } from './dialogs/user-api-keys-drawer'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
 import { UserLimitsDialog } from './dialogs/user-limits-dialog'
 import { useUsers } from './users-provider'
@@ -86,6 +87,15 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
   const user = row.original
   const operator = useAuthStore((state) => state.auth.user)
+  const canManageKeys =
+    !!operator &&
+    operator.role >= USER_ROLE.ADMIN &&
+    user.role < USER_ROLE.ROOT &&
+    hasPermission(
+      operator,
+      ADMIN_PERMISSION_RESOURCES.AUDIT,
+      ADMIN_PERMISSION_ACTIONS.READ
+    )
   const canManageLimits =
     !!operator &&
     operator.role >= USER_ROLE.ADMIN &&
@@ -109,6 +119,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
   const [limitsDialogOpen, setLimitsDialogOpen] = useState(false)
+  const [keysDrawerOpen, setKeysDrawerOpen] = useState(false)
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -312,6 +323,16 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         <DropdownMenuSeparator />
 
         <DropdownMenuItem
+          disabled={!canManageKeys}
+          onClick={() => setKeysDrawerOpen(true)}
+        >
+          {t('Key management')}
+          <DropdownMenuShortcut>
+            <KeyRound size={16} />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
+
+        <DropdownMenuItem
           onSelect={(event) => {
             event.preventDefault()
             setResetPasskeyOpen(true)
@@ -394,6 +415,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         onOpenChange={setLimitsDialogOpen}
         user={{ id: user.id, username: user.username }}
       />
+      {canManageKeys && keysDrawerOpen && (
+        <UserApiKeysDrawer
+          open={keysDrawerOpen}
+          onOpenChange={setKeysDrawerOpen}
+          user={{ id: user.id, username: user.username }}
+        />
+      )}
     </div>
   )
 }

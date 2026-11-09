@@ -27,8 +27,9 @@ import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { getUserModels } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
+
+import { getApiKeyModels, type ApiKeysScope } from '../../api'
 
 const APP_CONFIGS = {
   claude: {
@@ -94,6 +95,7 @@ interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
   tokenKey: string
+  scope?: ApiKeysScope
 }
 
 export function CCSwitchDialog(props: Props) {
@@ -103,8 +105,11 @@ export function CCSwitchDialog(props: Props) {
   const [models, setModels] = useState<Record<string, string>>({})
 
   const { data: modelsData } = useQuery({
-    queryKey: ['user-models-ccswitch'],
-    queryFn: async () => requireServerSuccess(await getUserModels()),
+    queryKey: props.scope
+      ? ['user-models-ccswitch', props.scope.userId]
+      : ['user-models-ccswitch'],
+    queryFn: async () =>
+      requireServerSuccess(await getApiKeyModels(props.scope)),
     enabled: props.open,
     staleTime: 5 * 60 * 1000,
   })

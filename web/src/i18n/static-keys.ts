@@ -744,7 +744,7 @@ export const STATIC_I18N_KEYS = [
 
   // Channel status audit events
   "View other accounts' audit logs",
-  'View user and admin audit records, and manage their usage limits, concurrency, and window resets, including your own. Root accounts are excluded.',
+  'View user and admin audit records, and manage their API keys, usage limits, concurrency, and window resets, including your own. Root accounts are excluded.',
   'Updated channel status (ID: {{id}})',
   'Batch updated channel status ({{count}}/{{total}} changed)',
 

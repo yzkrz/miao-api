@@ -20,7 +20,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import { flexRender, type Table as TanstackTable } from '@tanstack/react-table'
 import { Database } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -40,7 +40,7 @@ import {
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useTableUrlState } from '@/hooks/use-table-url-state'
+import { useTableUrlState, type NavigateFn } from '@/hooks/use-table-url-state'
 import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -216,10 +216,40 @@ function ApiKeysMobileList({
 }
 
 export function ApiKeysTable() {
+  const { scope } = useApiKeys()
+  return scope ? <ManagedApiKeysTable /> : <RoutedApiKeysTable />
+}
+
+function RoutedApiKeysTable() {
+  return (
+    <ApiKeysTableContent
+      search={route.useSearch()}
+      navigate={route.useNavigate()}
+    />
+  )
+}
+
+function ManagedApiKeysTable() {
+  const [search, setSearch] = useState<Record<string, unknown>>({})
+  const navigate = useCallback<NavigateFn>((options) => {
+    setSearch((previous) => {
+      if (options.search === true) return previous
+      return typeof options.search === 'function'
+        ? options.search(previous)
+        : options.search
+    })
+  }, [])
+  return <ApiKeysTableContent search={search} navigate={navigate} />
+}
+
+function ApiKeysTableContent(props: {
+  search: Record<string, unknown>
+  navigate: NavigateFn
+}) {
   const { t } = useTranslation()
-  const { refreshTrigger } = useApiKeys()
+  const { refreshTrigger, scope } = useApiKeys()
   const [now, setNow] = useState(() => Date.now())
-  const columns = useApiKeysColumns(now)
+  const columns = useApiKeysColumns(now, scope)
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -238,8 +268,8 @@ export function ApiKeysTable() {
     onPaginationChange,
     ensurePageInRange,
   } = useTableUrlState({
-    search: route.useSearch(),
-    navigate: route.useNavigate(),
+    search: props.search,
+    navigate: props.navigate,
     pagination: { defaultPage: 1, defaultPageSize: 20 },
     globalFilter: { enabled: true, key: 'filter' },
     columnFilters: [
@@ -264,6 +294,7 @@ export function ApiKeysTable() {
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
       'keys',
+      scope?.userId ?? 'self',
       pagination.pageIndex + 1,
       pagination.pageSize,
       globalFilter,
@@ -272,16 +303,22 @@ export function ApiKeysTable() {
     ],
     queryFn: async () => {
       const result = shouldSearch
-        ? await searchApiKeys({
-            keyword: globalFilter,
-            token: tokenFilter,
-            p: pagination.pageIndex + 1,
-            size: pagination.pageSize,
-          })
-        : await getApiKeys({
-            p: pagination.pageIndex + 1,
-            size: pagination.pageSize,
-          })
+        ? await searchApiKeys(
+            {
+              keyword: globalFilter,
+              token: tokenFilter,
+              p: pagination.pageIndex + 1,
+              size: pagination.pageSize,
+            },
+            scope
+          )
+        : await getApiKeys(
+            {
+              p: pagination.pageIndex + 1,
+              size: pagination.pageSize,
+            },
+            scope
+          )
 
       if (!result.success) {
         throw createServerError(
@@ -300,6 +337,7 @@ export function ApiKeysTable() {
       }
     },
     placeholderData: (previousData) => previousData,
+    gcTime: scope ? 0 : undefined,
   })
 
   const apiKeys = data?.items || []
@@ -341,6 +379,7 @@ export function ApiKeysTable() {
   return (
     <DataTablePage
       table={table}
+      paginationInFooter={!scope}
       columns={columns}
       isLoading={isLoading}
       isFetching={isFetching}

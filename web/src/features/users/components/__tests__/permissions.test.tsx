@@ -43,7 +43,7 @@ const target: User = {
 }
 const label = "View other accounts' audit logs"
 const description =
-  'View user and admin audit records, and manage their usage limits, concurrency, and window resets, including your own. Root accounts are excluded.'
+  'View user and admin audit records, and manage their API keys, usage limits, concurrency, and window resets, including your own. Root accounts are excluded.'
 
 function renderPermissions(viewerRole: number, allowed?: boolean) {
   useAuthStore
@@ -205,6 +205,8 @@ it.each([
   { viewer: 10, targetRole: 10, targetId: 2, granted: false, allowed: false },
   { viewer: 10, targetRole: 1, targetId: 2, granted: false, allowed: true },
   { viewer: 100, targetRole: 10, targetId: 2, granted: false, allowed: true },
+  { viewer: 1, targetRole: 1, targetId: 2, granted: true, allowed: false },
+  { viewer: 100, targetRole: 100, targetId: 1, granted: true, allowed: true },
 ])('usage limits menu follows role and audit access: %j', async (testCase) => {
   useAuthStore.getState().auth.setUser({
     id: 1,
@@ -238,5 +240,15 @@ it.each([
     expect(item).not.toHaveAttribute('aria-disabled', 'true')
   } else {
     expect(item).toHaveAttribute('aria-disabled', 'true')
+  }
+  const keys = screen.getByRole('menuitem', { name: 'Key management' })
+  const canManageKeys =
+    testCase.viewer >= 10 &&
+    testCase.targetRole < 100 &&
+    (testCase.viewer === 100 || testCase.granted)
+  if (canManageKeys) {
+    expect(keys).not.toHaveAttribute('aria-disabled', 'true')
+  } else {
+    expect(keys).toHaveAttribute('aria-disabled', 'true')
   }
 })

@@ -11,7 +11,7 @@ func init() {
 		Actions: []ActionDefinition{{
 			Action:         ActionRead,
 			LabelKey:       "View other accounts' audit logs",
-			DescriptionKey: "View user and admin audit records, and manage their usage limits, concurrency, and window resets, including your own. Root accounts are excluded.",
+			DescriptionKey: "View user and admin audit records, and manage their API keys, usage limits, concurrency, and window resets, including your own. Root accounts are excluded.",
 		}},
 	})
 }

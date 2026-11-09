@@ -225,6 +225,7 @@ var accessTokenVerificationScopes = map[string]string{
 	VerificationScopeAdminUserPasskeyReset: "user:write",
 	VerificationScopeAdminUserTwoFADisable: "user:write",
 	VerificationScopeAdminUserBindingClear: "user:write",
+	VerificationScopeAdminUserTokens:       AccessTokenScopeOf(authz.AuditRead),
 	VerificationScopePasskeyRegister:       "account_security:write",
 	VerificationScopePasskeyDelete:         "account_security:write",
 	VerificationScopeTwoFASetup:            "account_security:write",
