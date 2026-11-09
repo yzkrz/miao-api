@@ -50,11 +50,10 @@ export function UsageModelSelect(props: {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const normalizedQuery = query.trim().toLowerCase()
   const visibleModels = props.candidates.filter(
     (item) =>
-      !normalizedQuery ||
-      item.model.toLocaleLowerCase().startsWith(normalizedQuery)
+      !normalizedQuery || item.model.toLowerCase().includes(normalizedQuery)
   )
   const visibleModelNames = visibleModels.map((item) => item.model)
   const visibleSelectedCount = visibleModelNames.filter((model) =>

@@ -265,7 +265,7 @@ describe('UserLimitsDialog', () => {
     ).toHaveLength(2)
   })
 
-  it('filters by model-name prefix and saves the selected model scope', async () => {
+  it('filters model names and saves the selected model scope', async () => {
     const user = userEvent.setup()
     mockLoad()
     const put = vi
@@ -292,7 +292,7 @@ describe('UserLimitsDialog', () => {
     )
   })
 
-  it('opens with all models and filters model names by prefix', async () => {
+  it('opens with all models and matches any part of a model name without case sensitivity', async () => {
     const user = userEvent.setup()
     vi.spyOn(api, 'get').mockImplementation(async (url) => ({
       data: {
@@ -333,9 +333,9 @@ describe('UserLimitsDialog', () => {
     ).toBeVisible()
     expect(screen.getByRole('option', { name: 'vendor-gpt-4.1' })).toBeVisible()
 
-    await user.type(screen.getByPlaceholderText('Search models'), 'gpt')
+    await user.type(screen.getByPlaceholderText('Search models'), 'GPT')
     expect(screen.getByRole('option', { name: 'gpt-4.1' })).toBeVisible()
-    expect(screen.queryByRole('option', { name: 'vendor-gpt-4.1' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'vendor-gpt-4.1' })).toBeVisible()
     expect(
       screen.queryByRole('option', { name: 'claude-3.7-sonnet' })
     ).toBeNull()
@@ -365,6 +365,14 @@ describe('UserLimitsDialog', () => {
     expect(
       screen.getByRole('combobox', { name: 'Applicable models' })
     ).toHaveTextContent('+2 more')
+    await user.type(screen.getByPlaceholderText('Search models'), 'SONNET')
+    expect(
+      screen.getByRole('option', { name: 'claude-3.7-sonnet' })
+    ).toBeVisible()
+    expect(screen.queryByRole('option', { name: 'gpt-4.1' })).toBeNull()
+    expect(
+      screen.getByRole('checkbox', { name: 'Select all matching models' })
+    ).toBeChecked()
   })
 
   it('offers only the five natural periods and saves calendar-year rules', async () => {
