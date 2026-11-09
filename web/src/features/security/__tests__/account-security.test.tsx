@@ -42,6 +42,7 @@ import { EmailBindDialog } from '../components/dialogs/email-bind-dialog'
 import { TwoFABackupDialog } from '../components/dialogs/two-fa-backup-dialog'
 import { TwoFADisableDialog } from '../components/dialogs/two-fa-disable-dialog'
 import { TwoFASetupDialog } from '../components/dialogs/two-fa-setup-dialog'
+import { RequiredEmailGate } from '../components/required-email-gate'
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }))
 vi.mock('@tanstack/react-router', async (importOriginal) => ({
@@ -64,6 +65,57 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   useAuthStore.getState().auth.reset('idle')
+})
+
+it('blocks unverified accounts with a non-dismissable email form and restores the console after refresh', async () => {
+  useAuthStore.getState().auth.setUser({
+    id: 9,
+    username: 'legacy',
+    role: 10,
+    email: 'legacy@example.com',
+    email_verified: false,
+  })
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        id: 9,
+        username: 'legacy',
+        role: 10,
+        email: 'legacy@example.com',
+        email_verified: true,
+      },
+    },
+  })
+  const user = userEvent.setup()
+  render(
+    <RequiredEmailGate>
+      <p>Console content</p>
+    </RequiredEmailGate>
+  )
+  expect(screen.queryByText('Console content')).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Email Address')).toHaveValue(
+    'legacy@example.com'
+  )
+  expect(screen.getByRole('button', { name: 'Log out' })).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Cancel' })
+  ).not.toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  expect(screen.getByRole('dialog')).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Refresh' }))
+  expect(await screen.findByText('Console content')).toBeVisible()
+})
+
+it('allows root to enter the console without an email', () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
+  render(
+    <RequiredEmailGate>
+      <p>Root console</p>
+    </RequiredEmailGate>
+  )
+  expect(screen.getByText('Root console')).toBeVisible()
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
 
 it('requires verification after username confirmation and cancels without deleting the account', async () => {

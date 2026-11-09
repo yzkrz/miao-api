@@ -95,6 +95,16 @@ func ResendEmailBinding(identity AuthSessionIdentity, token, newCodeHash, oldCod
 	return flow, state, err
 }
 
+// HasVerifiedEmailForAPI reads authoritative mailbox trust: a stale user cache
+// must not grant access after an email was cleared or changed on another node.
+func HasVerifiedEmailForAPI(userID int) (bool, error) {
+	var user User
+	if err := DB.Select("role", "email", "email_verified").First(&user, userID).Error; err != nil {
+		return false, err
+	}
+	return user.Role == common.RoleRootUser || (NormalizeEmail(user.Email) != "" && user.EmailVerified), nil
+}
+
 // CompleteEmailBinding commits failed attempts even though verification fails.
 // Successful confirmation consumes the flow in the same transaction as the
 // email update, preserving the existing cross-database email ownership lock.
@@ -138,7 +148,7 @@ func CompleteEmailBinding(identity AuthSessionIdentity, token, email, newCode, o
 		if err := ensureEmailAvailableWithTx(tx, state.Email, identity.UserID); err != nil {
 			return err
 		}
-		if err := tx.Model(&User{}).Where("id = ?", identity.UserID).Update("email", state.Email).Error; err != nil {
+		if err := tx.Model(&User{}).Where("id = ?", identity.UserID).Updates(map[string]any{"email": state.Email, "email_verified": true}).Error; err != nil {
 			return err
 		}
 		return tx.Model(flow).Update("consumed_at", time.Now()).Error
@@ -195,10 +205,10 @@ func validateEmailBindingAccountWithTx(tx *gorm.DB, identity AuthSessionIdentity
 		return err
 	}
 	var user User
-	if err := tx.Select("email").First(&user, identity.UserID).Error; err != nil {
+	if err := tx.Select("email", "email_verified").First(&user, identity.UserID).Error; err != nil {
 		return err
 	}
-	if NormalizeEmail(user.Email) != state.CurrentEmail || state.CurrentEmail == state.Email {
+	if NormalizeEmail(user.Email) != state.CurrentEmail || (state.CurrentEmail == state.Email && user.EmailVerified) {
 		return ErrAccountBindingChanged
 	}
 	return nil

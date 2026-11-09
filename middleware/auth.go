@@ -517,6 +517,9 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 			c.Abort()
 			return
 		}
+		if !allowVerifiedEmailAPI(c, userCache) {
+			return
+		}
 
 		c.Set("id", token.UserId)
 		c.Set("token_id", token.Id)
@@ -618,6 +621,9 @@ func TokenAuth() func(c *gin.Context) {
 		}
 
 		userCache.WriteContext(c)
+		if !allowVerifiedEmailAPI(c, userCache) {
+			return
+		}
 
 		userGroup := userCache.Group
 		tokenGroup := token.Group

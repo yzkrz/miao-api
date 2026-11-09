@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -904,5 +906,95 @@ func TestSecurityAccountUnbindPreservesUsableLoginMethod(t *testing.T) {
 				require.NoError(t, model.DB.Where("user_id = ? AND provider_id = ?", user.Id, 31).First(&binding).Error)
 			}
 		})
+	}
+}
+
+func emailGateRequest(userID int, gate gin.HandlerFunc, key string) *httptest.ResponseRecorder {
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("id", userID) })
+	router.GET("/v1/models", gate, func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	request := httptest.NewRequest("GET", "/v1/models", nil)
+	request.Header.Set("Authorization", "Bearer "+key)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
+func TestEmailRequirementLegacyMigrationAndVerification(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	// Initialize dialect quoting through the same startup path as the server.
+	dialect := os.Getenv("TEST_SECURITY_DIALECT")
+	if dialect == "" {
+		dialect = "sqlite"
+	}
+	startupDB, dsn := newAuditTestDatabase(t, dialect, os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN"))
+	require.NoError(t, startupDB.AutoMigrate(&model.Option{}))
+	connection, err := startupDB.DB()
+	require.NoError(t, err)
+	require.NoError(t, connection.Close())
+	previousDB, previousSQLite, previousMaster := model.DB, common.SQLitePath, common.IsMasterNode
+	common.IsMasterNode = false
+	if dialect == "sqlite" {
+		common.SQLitePath = dsn
+		dsn = "local"
+	}
+	t.Setenv("SQL_DSN", dsn)
+	t.Setenv("LOG_SQL_DSN", "")
+	require.NoError(t, model.InitDB())
+	connection, err = model.DB.DB()
+	require.NoError(t, err)
+	require.NoError(t, connection.Close())
+	model.DB, common.SQLitePath, common.IsMasterNode = previousDB, previousSQLite, previousMaster
+	mailbox := newSecurityMailbox(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
+	// A pre-feature database has all existing columns and indexes except this
+	// new marker. Exercise an upgrade twice, retaining existing user data.
+	require.NoError(t, model.DB.Migrator().DropColumn(&model.User{}, "email_verified"))
+	require.NoError(t, model.DB.Model(user).Updates(map[string]any{"email": "legacy@example.com", "quota": 12345}).Error)
+	for range 2 {
+		require.NoError(t, model.DB.AutoMigrate(&model.User{}))
+	}
+	stored, err := model.GetUserById(user.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "legacy@example.com", stored.Email)
+	assert.Equal(t, user.Password, stored.Password)
+	assert.Equal(t, 12345, stored.Quota)
+	assert.False(t, stored.EmailVerified)
+	assert.True(t, model.DB.Migrator().HasIndex(&model.User{}, "idx_users_username"))
+	require.NoError(t, model.PublishUserAuthCache(user.Id))
+	token := &model.Token{UserId: user.Id, Key: strings.Repeat("a", 48), Status: common.TokenStatusEnabled, UnlimitedQuota: true, ExpiredTime: -1}
+	require.NoError(t, model.DB.Create(token).Error)
+	gates := []gin.HandlerFunc{middleware.TokenAuth(), middleware.TokenAuthReadOnly(), middleware.VerifiedEmailRequired()}
+	for _, gate := range gates {
+		response := emailGateRequest(user.Id, gate, token.Key)
+		assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+		assert.Contains(t, response.Body.String(), "verify an email address")
+	}
+	flow := startSecurityEmailBinding(t, identity, stored.Email, service.VerificationMethodPassword)
+	assert.False(t, flow.OldEmailRequired)
+	code := mailbox.code(t, stored.Email)
+	wrong := "000000"
+	if wrong == code {
+		wrong = "111111"
+	}
+	_, err = service.FinishEmailBinding(identity, flow.FlowToken, wrong, "")
+	assert.ErrorIs(t, err, model.ErrEmailBindingCodeInvalid)
+	assert.Equal(t, http.StatusForbidden, emailGateRequest(user.Id, middleware.VerifiedEmailRequired(), "").Code)
+	_, err = service.FinishEmailBinding(identity, flow.FlowToken, code, "")
+	require.NoError(t, err)
+	for _, gate := range gates {
+		assert.Equal(t, http.StatusNoContent, emailGateRequest(user.Id, gate, token.Key).Code)
+	}
+	_, err = service.FinishEmailBinding(identity, flow.FlowToken, code, "")
+	assert.ErrorIs(t, err, model.ErrAuthFlowConsumed)
+	// A generic user update may neither transfer nor forge mailbox trust.
+	update := &model.User{Id: user.Id, Email: "changed@example.com", EmailVerified: true}
+	require.NoError(t, update.Update(false))
+	assert.False(t, update.EmailVerified)
+	assert.Equal(t, http.StatusForbidden, emailGateRequest(user.Id, middleware.VerifiedEmailRequired(), "").Code)
+	require.NoError(t, model.DB.Model(user).Updates(map[string]any{"role": common.RoleRootUser, "email": "", "email_verified": false}).Error)
+	require.NoError(t, model.PublishUserAuthCache(user.Id))
+	for _, gate := range gates {
+		assert.Equal(t, http.StatusNoContent, emailGateRequest(user.Id, gate, token.Key).Code)
 	}
 }

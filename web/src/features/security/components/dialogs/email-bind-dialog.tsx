@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Loader2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -66,6 +66,8 @@ interface EmailBindDialogProps {
   onOpenChange: (open: boolean) => void
   currentEmail?: string
   onSuccess: () => void
+  required?: boolean
+  requiredActions?: ReactNode
 }
 
 export function EmailBindDialog(props: EmailBindDialogProps) {
@@ -84,11 +86,21 @@ export function EmailBindDialog(props: EmailBindDialogProps) {
   const resetDeadline = deadline.reset
 
   useEffect(() => {
-    reset(emptyEmailForm)
+    reset({
+      ...emptyEmailForm,
+      email: props.required ? (props.currentEmail ?? '') : '',
+    })
     setFlow(null)
     resetResend()
     resetDeadline()
-  }, [security.sessionKey, reset, resetResend, resetDeadline])
+  }, [
+    security.sessionKey,
+    props.currentEmail,
+    props.required,
+    reset,
+    resetResend,
+    resetDeadline,
+  ])
   useEffect(() => {
     if (!props.open) {
       cancel()
@@ -106,6 +118,7 @@ export function EmailBindDialog(props: EmailBindDialogProps) {
     security.error?.code === 'EMAIL_BINDING_DELIVERY_FAILED'
   const expired = Boolean(flow && (!deadline.isActive || terminalFailure))
   const handleOpenChange = (open: boolean) => {
+    if (!open && props.required) return
     if (!open) {
       security.cancel()
       form.reset(emptyEmailForm)
@@ -164,7 +177,7 @@ export function EmailBindDialog(props: EmailBindDialogProps) {
     )
     if (!result) return
     toast.success(t('Email bound successfully!'))
-    handleOpenChange(false)
+    if (!props.required) handleOpenChange(false)
     props.onSuccess()
   }
   const resendCodes = async () => {
@@ -187,29 +200,45 @@ export function EmailBindDialog(props: EmailBindDialogProps) {
     deadline.reset()
   }
 
+  let description = t('Bind an email address to your account.')
+  if (props.currentEmail) {
+    description = t('Current email: {{email}}. Enter a new email to change.', {
+      email: props.currentEmail,
+    })
+  }
+  if (props.required) {
+    description = t(
+      'API access is paused until you bind and verify your email address. Existing email addresses must also be verified.'
+    )
+  }
   return (
     <>
       <Dialog
         open={props.open && !security.showVerification}
+        disablePointerDismissal={props.required}
+        showCloseButton={!props.required}
         onOpenChange={handleOpenChange}
-        title={t('Bind Email')}
-        description={
-          props.currentEmail
-            ? t('Current email: {{email}}. Enter a new email to change.', {
-                email: props.currentEmail,
-              })
-            : t('Bind an email address to your account.')
+        title={
+          props.required ? t('Verify your email to continue') : t('Bind Email')
         }
-        contentClassName='sm:max-w-md'
+        description={description}
+        contentClassName={
+          props.required
+            ? 'h-dvh max-h-dvh! max-w-full! rounded-none! sm:max-w-full! [&>div]:mx-auto [&>div]:w-full [&>div]:max-w-lg'
+            : 'sm:max-w-md'
+        }
         footer={
           <>
-            <Button
-              type='button'
-              variant='outline'
-              onClick={() => handleOpenChange(false)}
-            >
-              {t('Cancel')}
-            </Button>
+            {props.required && props.requiredActions}
+            {!props.required && (
+              <Button
+                type='button'
+                variant='outline'
+                onClick={() => handleOpenChange(false)}
+              >
+                {t('Cancel')}
+              </Button>
+            )}
             {expired ? (
               <Button type='button' onClick={restart}>
                 {t('Start again')}

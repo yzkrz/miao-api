@@ -71,7 +71,7 @@ func StartEmailBinding(identity AuthIdentity, authorization *model.AuthFlowAutho
 		return nil, err
 	}
 	state := model.EmailBindingState{Authorization: authorization, CurrentEmail: model.NormalizeEmail(user.Email), Email: email, ResendAt: time.Now().Add(model.EmailBindingResendDelay).Unix()}
-	requireOld := state.CurrentEmail != "" && authorization.Method != VerificationMethodTwoFA && authorization.Method != VerificationMethodPasskey
+	requireOld := state.CurrentEmail != "" && state.CurrentEmail != state.Email && authorization.Method != VerificationMethodTwoFA && authorization.Method != VerificationMethodPasskey
 	codes, err := generateEmailBindingCodes(requireOld)
 	if err != nil {
 		return nil, err
