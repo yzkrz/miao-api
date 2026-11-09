@@ -315,6 +315,10 @@ func probeModelReplacementTarget(ctx context.Context, target *modelReplacementTa
 			attempt.Matched = item.AnswerMatches(answer)
 			attempt.Answer = truncateModelReplacementText(answer)
 			attempt.ErrorMessage = ""
+			if result.responseModel != "" && result.responseModel != item.Model {
+				attempt.Matched = false
+				attempt.ErrorMessage = "The response model does not exactly match the test model."
+			}
 			break
 		}
 		target.attempts = append(target.attempts, attempt)
@@ -408,9 +412,10 @@ func truncateModelReplacementText(text string) string {
 }
 
 // summarizeModelReplacementAttempts computes per-model statistics and the
-// channel verdict. A model is replaced when its share of mismatched answers
-// exceeds the threshold percentage; any request that failed after its retries
-// makes the channel failed. matchPercent is the lowest model match rate.
+// channel verdict. A model is replaced when the share of rounds with a wrong
+// answer or response model exceeds the threshold percentage. Any request that
+// failed after its retries makes the channel failed. matchPercent is the lowest
+// model match rate.
 func summarizeModelReplacementAttempts(models []operation_setting.ModelReplacementModelSetting, attempts []model.ModelReplacementAttempt, threshold float64) ([]model.ModelReplacementModelStat, string, float64) {
 	stats := make([]model.ModelReplacementModelStat, 0, len(models))
 	verdict := model.ModelReplacementVerdictPassed

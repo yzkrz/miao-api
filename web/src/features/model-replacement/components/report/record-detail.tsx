@@ -150,6 +150,12 @@ function AttemptItem(props: { attempt: DetectionAttempt }) {
     resultVariant = 'success'
   } else if (attempt.success) {
     resultLabel = t('Answer mismatched')
+    if (
+      attempt.error_message ===
+      'The response model does not exactly match the test model.'
+    ) {
+      resultLabel = t('Response model mismatched')
+    }
     resultVariant = 'danger'
   }
 
@@ -180,6 +186,11 @@ function AttemptItem(props: { attempt: DetectionAttempt }) {
         <dt>{t('Tries')}</dt>
         <dd className='text-foreground text-right'>{attempt.tries}</dd>
       </dl>
+      {attempt.success && attempt.error_message && (
+        <p className='text-destructive break-words'>
+          {t(attempt.error_message)}
+        </p>
+      )}
       <div className='space-y-0.5'>
         <div className='text-muted-foreground'>
           {attempt.success ? t('Returned answer') : t('Error')}

@@ -99,6 +99,9 @@ type RelayInfo struct {
 	RelayMode              int
 	OriginModelName        string
 	ResponseModel          *ResponseModel
+	// ChannelTestResponseModel retains the first exact mismatch for detection,
+	// independently of the more permissive response-model log comparison.
+	ChannelTestResponseModel string
 
 	// BillingModelName is the pricing identity for this request. It is kept
 	// separate from OriginModelName and UpstreamModelName so virtual pricing
@@ -271,6 +274,7 @@ func (info *RelayInfo) RequestedImageCount() int {
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	info.ResponseModel = nil
+	info.ChannelTestResponseModel = ""
 	info.FinalRequestRelayFormat = ""
 	info.RequestConversionChain = nil
 	info.InitRequestConversionChain()

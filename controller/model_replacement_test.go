@@ -18,12 +18,15 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -552,7 +555,7 @@ func TestModelReplacementDetectionProbesChannelsAndAppliesVerdicts(t *testing.T)
 
 	const question = "Which model are you? Reply with the model name only."
 	var honestBodies atomic.Value
-	upstream := func(answer string, calls *atomic.Int32) *httptest.Server {
+	upstream := func(answer, responseModel string, calls *atomic.Int32) *httptest.Server {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			calls.Add(1)
 			body, _ := io.ReadAll(r.Body)
@@ -562,16 +565,16 @@ func TestModelReplacementDetectionProbesChannelsAndAppliesVerdicts(t *testing.T)
 			}
 			honestBodies.Store(string(body))
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"id":"chatcmpl-1","object":"chat.completion","model":"mr-probe-model","choices":[{"index":0,"message":{"role":"assistant","content":"`+answer+`"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}}`)
+			_, _ = io.WriteString(w, `{"id":"chatcmpl-1","object":"chat.completion","model":"`+responseModel+`","choices":[{"index":0,"message":{"role":"assistant","content":"`+answer+`"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}}`)
 		}))
 		t.Cleanup(server.Close)
 		return server
 	}
 	var honestCalls, swappedCalls, brokenCalls, disabledCalls atomic.Int32
-	honest := upstream("I am mr-probe-model", &honestCalls)
-	swapped := upstream("I am claude-3", &swappedCalls)
-	broken := upstream("", &brokenCalls)
-	disabled := upstream("I am mr-probe-model", &disabledCalls)
+	honest := upstream("I am mr-probe-model", "mr-probe-model", &honestCalls)
+	swapped := upstream("I am mr-probe-model", "other-model", &swappedCalls)
+	broken := upstream("", "", &brokenCalls)
+	disabled := upstream("I am mr-probe-model", "mr-probe-model", &disabledCalls)
 
 	insert := func(id int, baseURL string, group string, status int) {
 		channel := &model.Channel{Id: id, Name: "channel", Key: "sk-test", Type: constant.ChannelTypeOpenAI, Status: status, Models: "mr-probe-model", Group: group, BaseURL: &baseURL}
@@ -632,6 +635,18 @@ func TestModelReplacementDetectionProbesChannelsAndAppliesVerdicts(t *testing.T)
 	assert.True(t, attempts[0].Matched)
 	assert.Equal(t, []int{1, 2}, []int{attempts[0].Round, attempts[1].Round})
 
+	swappedHistory, err := model.GetModelReplacementHistory(2, 0, math.MaxInt64, 10)
+	require.NoError(t, err)
+	require.Len(t, swappedHistory, 1)
+	assert.Equal(t, model.ModelReplacementVerdictReplaced, swappedHistory[0].Verdict)
+	swappedAttempts, err := model.GetModelReplacementAttempts(swappedHistory[0].ID)
+	require.NoError(t, err)
+	require.Len(t, swappedAttempts, 2)
+	assert.True(t, swappedAttempts[0].Success)
+	assert.False(t, swappedAttempts[0].Matched)
+	assert.Equal(t, "I am mr-probe-model", swappedAttempts[0].Answer)
+	assert.Equal(t, "The response model does not exactly match the test model.", swappedAttempts[0].ErrorMessage)
+
 	brokenHistory, err := model.GetModelReplacementHistory(3, 0, math.MaxInt64, 10)
 	require.NoError(t, err)
 	require.Len(t, brokenHistory, 1)
@@ -650,4 +665,118 @@ func TestModelReplacementDetectionProbesChannelsAndAppliesVerdicts(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, common.ChannelStatusAutoDisabled, disabledChannel.Status)
 	assert.Equal(t, "default,abnormal", disabledChannel.Group, "manual retests do not modify disabled channel settings")
+}
+
+func TestModelReplacementDetectionResponseModelIdentity(t *testing.T) {
+	db := setupModelReplacementTestDB(t)
+	previousRedis, previousRDB := common.RedisEnabled, common.RDB
+	previousStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	previousRatios := ratio_setting.ModelRatio2JSONString()
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	common.RedisEnabled, common.RDB = true, redisClient
+	t.Cleanup(func() {
+		common.RedisEnabled, common.RDB = previousRedis, previousRDB
+		_ = redisClient.Close()
+		constant.StreamingTimeout = previousStreamingTimeout
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousRatios))
+	})
+	require.NoError(t, i18n.Init())
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"mr-probe-model":1,"mr-probe-codex":1}`))
+	service.InitHttpClient()
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "default"}).Error)
+
+	for _, tc := range []struct {
+		name, returned, answer, mapping string
+		channelType                     int
+		responses                       bool
+		wantMatch                       bool
+	}{
+		{name: "correct answer and model", returned: "mr-probe-model", answer: "expected", wantMatch: true},
+		{name: "correct answer but wrong model", returned: "other-model", answer: "expected"},
+		{name: "wrong answer but same model", returned: "mr-probe-model", answer: "wrong"},
+		{name: "both wrong", returned: "other-model", answer: "wrong"},
+		{name: "missing model still uses answer", answer: "expected", wantMatch: true},
+		{name: "dated variant is not an exact match", returned: "mr-probe-model-2026-11-08", answer: "expected"},
+		{name: "case difference is not an exact match", returned: "MR-PROBE-MODEL", answer: "expected"},
+		{name: "mapped model still differs from test model", returned: "mapped-model", answer: "expected", mapping: `{"mr-probe-model":"mapped-model"}`},
+		{name: "responses JSON checks its declared model", returned: "other-model", answer: "expected", responses: true},
+		{name: "gemini original model survives chat conversion", returned: "other-model", answer: "expected", channelType: constant.ChannelTypeGemini},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				var body any = map[string]any{
+					"id": "chatcmpl-1", "object": "chat.completion", "model": tc.returned,
+					"choices": []any{map[string]any{"index": 0, "message": map[string]string{"role": "assistant", "content": tc.answer}, "finish_reason": "stop"}},
+					"usage":   map[string]int{"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+				}
+				if tc.responses {
+					body = map[string]any{"id": "resp-1", "model": tc.returned, "status": "completed", "output": []any{map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]string{"type": "output_text", "text": tc.answer}}}}, "usage": map[string]int{"input_tokens": 2, "output_tokens": 3, "total_tokens": 5}}
+				}
+				if tc.channelType == constant.ChannelTypeGemini {
+					body = map[string]any{"modelVersion": tc.returned, "candidates": []any{map[string]any{"content": map[string]any{"role": "model", "parts": []any{map[string]string{"text": tc.answer}}}, "finishReason": "STOP"}}, "usageMetadata": map[string]int{"promptTokenCount": 2, "candidatesTokenCount": 3, "totalTokenCount": 5}}
+				}
+				encoded, err := common.Marshal(body)
+				if err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				_, _ = w.Write(encoded)
+			}))
+			defer server.Close()
+			channelType := tc.channelType
+			if channelType == 0 {
+				channelType = constant.ChannelTypeOpenAI
+			}
+			channel := &model.Channel{Id: 1, Name: "probe", Type: channelType, Status: common.ChannelStatusEnabled, Key: "test-key", BaseURL: &server.URL, Group: "default", ModelMapping: &tc.mapping}
+			modelName := "mr-probe-model"
+			if tc.responses {
+				modelName = "mr-probe-codex"
+			}
+			setting := operation_setting.ModelReplacementModelSetting{Model: modelName, Question: "test", ExpectedAnswer: "expected", MatchMode: "exact", RetryTimes: 2}
+			target := &modelReplacementTarget{channel: channel, models: []operation_setting.ModelReplacementModelSetting{setting}}
+			probeModelReplacementTarget(context.Background(), target, 1, 1, 5*time.Second)
+			require.Len(t, target.attempts, 1)
+			attempt := target.attempts[0]
+			require.True(t, attempt.Success, attempt.ErrorMessage)
+			assert.Equal(t, tc.wantMatch, attempt.Matched)
+			assert.EqualValues(t, 1, calls.Load(), "a mismatched result is not a request failure and is not retried")
+			assert.Equal(t, tc.answer, attempt.Answer)
+			if tc.returned != "" && tc.returned != modelName {
+				assert.Equal(t, "The response model does not exactly match the test model.", attempt.ErrorMessage)
+			} else {
+				assert.Empty(t, attempt.ErrorMessage)
+			}
+			if !tc.wantMatch {
+				attempts := append([]model.ModelReplacementAttempt{attempt}, model.ModelReplacementAttempt{Model: modelName, Success: true, Matched: true})
+				_, verdict, _ := summarizeModelReplacementAttempts(target.models, attempts, 50)
+				assert.Equal(t, model.ModelReplacementVerdictPassed, verdict, "threshold remains strictly greater than")
+				_, verdict, _ = summarizeModelReplacementAttempts(target.models, attempts, 49)
+				assert.Equal(t, model.ModelReplacementVerdictReplaced, verdict)
+			}
+		})
+	}
+
+	t.Run("stream retains exact mismatch before conversion and a later matching event", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: "+`{"modelVersion":"mapped-model","candidates":[{"content":{"role":"model","parts":[{"text":"expected"}]}}]}`+"\n\ndata: "+`{"modelVersion":"mr-probe-model","candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":3,"totalTokenCount":5}}`+"\n\n")
+		}))
+		defer server.Close()
+		mapping := `{"mr-probe-model":"mapped-model"}`
+		channel := &model.Channel{Id: 1, Name: "stream-probe", Type: constant.ChannelTypeGemini, Status: common.ChannelStatusEnabled, Key: "test-key", BaseURL: &server.URL, Group: "default", ModelMapping: &mapping}
+		stream := true
+		request := &dto.GeneralOpenAIRequest{Model: "mr-probe-model", Stream: &stream, Messages: []dto.Message{{Role: "user", Content: "test"}}}
+		result := runChannelTest(context.Background(), channel, 1, "mr-probe-model", string(constant.EndpointTypeOpenAI), true, request)
+		require.NoError(t, result.localErr)
+		assert.Equal(t, "mapped-model", result.responseModel)
+		answer, err := extractModelReplacementAnswer(result.responseBody, true)
+		require.NoError(t, err)
+		assert.Equal(t, "expected", answer)
+	})
 }

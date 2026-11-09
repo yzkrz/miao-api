@@ -116,7 +116,7 @@ const NUMERIC_FIELDS: NumericSettingField[] = [
     name: 'threshold',
     label: 'Mismatch threshold (%)',
     description:
-      'A model is treated as replaced when its share of mismatched answers across all rounds exceeds this value. 0 requires every answer to match.',
+      'A round is mismatched when the answer is wrong or the returned model name does not exactly match the test model. A model is treated as replaced when the percentage of mismatched rounds exceeds this value.',
     min: 0,
     max: 100,
     step: 0.1,

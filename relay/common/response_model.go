@@ -41,6 +41,9 @@ func (info *RelayInfo) ObserveResponseModel(model string) {
 	if info == nil || strings.TrimSpace(model) == "" {
 		return
 	}
+	if info.IsChannelTest && (info.ChannelTestResponseModel == "" || info.ChannelTestResponseModel == info.OriginModelName) {
+		info.ChannelTestResponseModel = model
+	}
 	if info.ResponseModel == nil {
 		info.ResponseModel = &ResponseModel{
 			RequestedModel: info.OriginModelName,

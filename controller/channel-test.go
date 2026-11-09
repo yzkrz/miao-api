@@ -43,6 +43,9 @@ type testResult struct {
 	// responseBody is the client-format response of a successful test; a
 	// default stream test keeps only its head.
 	responseBody []byte
+	// responseModel is an actual upstream declaration, before conversion. Tests
+	// retain the first name not exactly equal to the requested model.
+	responseModel string
 }
 
 // unsupportedTestChannelTypes are task-style channels that cannot answer a
@@ -535,10 +538,11 @@ func runChannelTest(ctx context.Context, channel *model.Channel, testUserID int,
 	})
 	common.SysLog(common.LogText("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	return testResult{
-		context:      c,
-		localErr:     nil,
-		newAPIError:  nil,
-		responseBody: respBody,
+		context:       c,
+		localErr:      nil,
+		newAPIError:   nil,
+		responseBody:  respBody,
+		responseModel: info.ChannelTestResponseModel,
 	}
 }
 
