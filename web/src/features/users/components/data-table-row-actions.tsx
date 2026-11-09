@@ -49,11 +49,6 @@ import {
 } from '@/components/ui/tooltip'
 import type { AdminUserManageAction } from '@/features/auth/secure-verification'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
-import {
-  ADMIN_PERMISSION_ACTIONS,
-  ADMIN_PERMISSION_RESOURCES,
-  hasPermission,
-} from '@/lib/admin-permissions'
 import { handleServerError } from '@/lib/handle-server-error'
 import { AuthOperationError } from '@/lib/secure-verification'
 import { useAuthStore } from '@/stores/auth-store'
@@ -70,6 +65,7 @@ import type { User } from '../types'
 import { UserApiKeysDrawer } from './dialogs/user-api-keys-drawer'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
 import { UserLimitsDialog } from './dialogs/user-limits-dialog'
+import { UserQuotaDialog } from './user-quota-dialog'
 import { useUsers } from './users-provider'
 
 const MANAGE_ACTION_TITLES: Record<AdminUserManageAction, string> = {
@@ -87,27 +83,10 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
   const user = row.original
   const operator = useAuthStore((state) => state.auth.user)
-  const canManageKeys =
+  const canManageQuotaAndKeys =
     !!operator &&
     operator.role >= USER_ROLE.ADMIN &&
-    user.role < USER_ROLE.ROOT &&
-    hasPermission(
-      operator,
-      ADMIN_PERMISSION_RESOURCES.AUDIT,
-      ADMIN_PERMISSION_ACTIONS.READ
-    )
-  const canManageLimits =
-    !!operator &&
-    operator.role >= USER_ROLE.ADMIN &&
-    user.role < USER_ROLE.ROOT &&
-    (operator.role === USER_ROLE.ROOT ||
-      operator.role > user.role ||
-      (user.role < USER_ROLE.ROOT &&
-        hasPermission(
-          operator,
-          ADMIN_PERMISSION_RESOURCES.AUDIT,
-          ADMIN_PERMISSION_ACTIONS.READ
-        )))
+    (operator.role === USER_ROLE.ROOT || user.role < USER_ROLE.ROOT)
   const {
     setOpen,
     setCurrentRow,
@@ -122,6 +101,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
   const [limitsDialogOpen, setLimitsDialogOpen] = useState(false)
   const [keysDrawerOpen, setKeysDrawerOpen] = useState(false)
+  const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -314,7 +294,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
         <DropdownMenuItem
           onClick={() => setLimitsDialogOpen(true)}
-          disabled={!canManageLimits}
+          disabled={!canManageQuotaAndKeys}
         >
           {t('Usage Limits')}
           <DropdownMenuShortcut>
@@ -325,7 +305,17 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         <DropdownMenuSeparator />
 
         <DropdownMenuItem
-          disabled={!canManageKeys}
+          disabled={!canManageQuotaAndKeys}
+          onClick={() => setQuotaDialogOpen(true)}
+        >
+          {t('Adjust Quota')}
+          <DropdownMenuShortcut>
+            <CreditCard size={16} />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
+
+        <DropdownMenuItem
+          disabled={!canManageQuotaAndKeys}
           onClick={() => setKeysDrawerOpen(true)}
         >
           {t('Key management')}
@@ -413,11 +403,20 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
       />
 
       <UserLimitsDialog
-        open={limitsDialogOpen && canManageLimits}
+        open={limitsDialogOpen && canManageQuotaAndKeys}
         onOpenChange={setLimitsDialogOpen}
         user={{ id: user.id, username: user.username }}
       />
-      {canManageKeys && keysDrawerOpen && (
+      {canManageQuotaAndKeys && quotaDialogOpen && (
+        <UserQuotaDialog
+          open={quotaDialogOpen}
+          onOpenChange={setQuotaDialogOpen}
+          userId={user.id}
+          currentQuota={user.quota}
+          onSuccess={triggerRefresh}
+        />
+      )}
+      {canManageQuotaAndKeys && keysDrawerOpen && (
         <UserApiKeysDrawer
           open={keysDrawerOpen}
           onOpenChange={setKeysDrawerOpen}

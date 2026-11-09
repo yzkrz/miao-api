@@ -408,7 +408,7 @@ func TestManageUserQuotaTargetsAndWalletBounds(t *testing.T) {
 		{name: "negative_id", mode: "subtract", value: 1, targetID: -1, reason: "invalid_parameters"},
 		{name: "missing", mode: "override", value: 1, targetID: 12345, reason: "target_not_found"},
 		{name: "deleted", mode: "add", value: 1, targetID: 1, deleted: true, reason: "target_not_found"},
-		{name: "peer_admin", mode: "add", value: 1, targetID: 1, targetRole: common.RoleAdminUser, operatorRole: common.RoleAdminUser, reason: "permission_denied"},
+		{name: "non_admin", mode: "add", value: 1, targetID: 1, targetRole: common.RoleCommonUser, operatorRole: common.RoleCommonUser, reason: "permission_denied"},
 		{name: "higher_role", mode: "override", value: 1, targetID: 1, targetRole: common.RoleRootUser, operatorRole: common.RoleAdminUser, reason: "permission_denied"},
 		{name: "read_error", mode: "add", value: 1, targetID: 1, failRead: true, reason: "database_error"},
 		{name: "add_overflow", mode: "add", before: common.MaxWalletQuota, value: 1, targetID: 1, reason: "quota_limit_exceeded"},
@@ -462,6 +462,45 @@ func TestManageUserQuotaTargetsAndWalletBounds(t *testing.T) {
 			require.NoError(t, model.LOG_DB.Model(&model.Log{}).Count(&count).Error)
 			assert.Zero(t, count)
 		})
+	}
+}
+
+func TestManageUserQuotaAdministratorTargets(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	operator := createQuotaTestOperator(t, db, common.RoleAdminUser)
+	ordinary := model.User{Username: "quota-common", Role: common.RoleCommonUser, AffCode: "quota-common"}
+	peer := model.User{Username: "quota-peer", Role: common.RoleAdminUser, AffCode: "quota-peer"}
+	require.NoError(t, db.Create(&ordinary).Error)
+	require.NoError(t, db.Create(&peer).Error)
+	for _, tc := range []struct {
+		name                   string
+		targetID, operatorRole int
+	}{
+		{"ordinary", ordinary.Id, common.RoleAdminUser},
+		{"peer", peer.Id, common.RoleAdminUser},
+		{"self", operator.Id, common.RoleAdminUser},
+		{"root self", operator.Id, common.RoleRootUser},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, db.Model(&model.User{}).Where("id = ?", operator.Id).Update("role", tc.operatorRole).Error)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/user/manage", strings.NewReader(fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":"override","value":123}`, tc.targetID)))
+			c.Set("id", operator.Id)
+			c.Set("role", tc.operatorRole)
+			ManageUser(c)
+			require.Contains(t, recorder.Body.String(), `"success":true`)
+			var target model.User
+			require.NoError(t, db.First(&target, tc.targetID).Error)
+			assert.Equal(t, 123, target.Quota)
+		})
+	}
+	var audits []model.AuditLog
+	require.NoError(t, model.LOG_DB.Where("action = ?", "user.quota_override").Find(&audits).Error)
+	require.Len(t, audits, 4)
+	for _, audit := range audits {
+		assert.True(t, audit.Success)
+		assert.Equal(t, operator.Id, audit.UserId)
 	}
 }
 
@@ -812,21 +851,20 @@ func TestUpdateUserLimitsSavesPolicyAndRecordsAudit(t *testing.T) {
 	assert.Contains(t, string(params), `"max_concurrency":3`)
 }
 
-func TestUserLimitsRequireAHigherRoleThanTheTarget(t *testing.T) {
+func TestUserLimitsAllowPeerAdministratorsWithoutAuditPermission(t *testing.T) {
 	db, _ := setupUserLimitsTest(t)
 	admin := model.User{Username: "limited-admin", Role: common.RoleAdminUser, AffCode: "limited-admin-aff"}
 	require.NoError(t, db.Create(&admin).Error)
 	t.Cleanup(func() { model.InvalidateUserLimitSnapshot(admin.Id) })
 
 	response := performUserLimitsRequest(t, GetUserLimits, http.MethodGet, admin.Id, common.RoleAdminUser, "")
-	assert.False(t, response.Success)
-	assert.Equal(t, "No permission to access users of same or higher level", response.Message)
+	assert.True(t, response.Success, response.Message)
 
 	response = performUserLimitsRequest(t, UpdateUserLimits, http.MethodPut, admin.Id, common.RoleAdminUser, `{"max_concurrency":1}`)
-	assert.False(t, response.Success)
+	assert.True(t, response.Success, response.Message)
 	snapshot, err := model.LoadUserLimitSnapshot(admin.Id)
 	require.NoError(t, err)
-	assert.Zero(t, snapshot.MaxConcurrency, "an operator of the same role cannot set limits")
+	assert.Equal(t, 1, snapshot.MaxConcurrency, "an administrator can set peer limits without an audit grant")
 }
 
 func TestResetUserLimitWindowsEndsTheCurrentWindow(t *testing.T) {
@@ -848,7 +886,7 @@ func TestResetUserLimitWindowsEndsTheCurrentWindow(t *testing.T) {
 	assert.Len(t, audits, 1)
 }
 
-func TestUserLimitsAuditPermissionAllowsNonRootTargets(t *testing.T) {
+func TestUserLimitsAdministratorTargets(t *testing.T) {
 	db, user := setupUserLimitsTest(t)
 	previousMaster := common.IsMasterNode
 	common.IsMasterNode = true
@@ -863,7 +901,7 @@ func TestUserLimitsAuditPermissionAllowsNonRootTargets(t *testing.T) {
 	for _, id := range []int{operator.Id, admin.Id, root.Id} {
 		t.Cleanup(func() { model.InvalidateUserLimitSnapshot(id) })
 	}
-	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: true}}))
+	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: false}}))
 	for _, target := range []model.User{user, admin, operator} {
 		t.Run(target.Username, func(t *testing.T) {
 			response := performUserLimitsRequest(t, UpdateUserLimits, http.MethodPut, target.Id, common.RoleAdminUser, `{"max_concurrency":3,"usage_rules":[{"window_seconds":3600,"quota_limit":100,"enabled":true}]}`)
@@ -889,26 +927,34 @@ func TestUserLimitsAuditPermissionAllowsNonRootTargets(t *testing.T) {
 		{ResetUserLimitWindows, http.MethodPost, `{}`},
 	} {
 		assert.False(t, performUserLimitsRequest(t, op.handler, op.method, root.Id, common.RoleAdminUser, op.body).Success, "audit grant cannot manage root")
-		assert.False(t, performUserLimitsRequest(t, op.handler, op.method, root.Id, common.RoleRootUser, op.body).Success, "root targets cannot have limits managed")
 		assert.False(t, performUserLimitsRequest(t, op.handler, op.method, admin.Id, common.RoleCommonUser, op.body).Success, "a grant cannot bypass the administrator requirement")
 	}
 	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: false}}))
 	for _, targetID := range []int{admin.Id, operator.Id} {
 		model.RecordUserUsageWindows(targetID, 50)
-		assert.False(t, performUserLimitsRequest(t, GetUserLimits, http.MethodGet, targetID, common.RoleAdminUser, "").Success)
-		assert.False(t, performUserLimitsRequest(t, UpdateUserLimits, http.MethodPut, targetID, common.RoleAdminUser, `{"max_concurrency":9}`).Success)
-		assert.False(t, performUserLimitsRequest(t, ResetUserLimitWindows, http.MethodPost, targetID, common.RoleAdminUser, `{}`).Success)
+		assert.True(t, performUserLimitsRequest(t, GetUserLimits, http.MethodGet, targetID, common.RoleAdminUser, "").Success)
+		assert.True(t, performUserLimitsRequest(t, UpdateUserLimits, http.MethodPut, targetID, common.RoleAdminUser, `{"max_concurrency":9,"usage_rules":[{"window_seconds":3600,"quota_limit":100,"enabled":true}]}`).Success)
+		assert.True(t, performUserLimitsRequest(t, ResetUserLimitWindows, http.MethodPost, targetID, common.RoleAdminUser, `{}`).Success)
 		snapshot, err := model.LoadUserLimitSnapshot(targetID)
 		require.NoError(t, err)
-		assert.Equal(t, 3, snapshot.MaxConcurrency, "revocation takes effect before the next write")
+		assert.Equal(t, 9, snapshot.MaxConcurrency, "audit permissions do not govern limits")
 		windows, err := model.GetUserUsageWindows(targetID)
 		require.NoError(t, err)
 		require.Len(t, windows, 1)
-		assert.EqualValues(t, 50, windows[0].UsedQuota, "revocation prevents resetting the window")
+		assert.Zero(t, windows[0].UsedQuota, "an administrator can reset the window without an audit grant")
 	}
 	var audits []model.AuditLog
 	require.NoError(t, model.LOG_DB.Find(&audits).Error)
-	assert.Len(t, audits, 6, "each successful update and reset is audited")
+	assert.Len(t, audits, 10, "each successful update and reset is audited")
+	require.NoError(t, db.Model(&operator).Update("role", common.RoleRootUser).Error)
+	response := performUserLimitsRequest(t, UpdateUserLimits, http.MethodPut, operator.Id, common.RoleRootUser, `{"max_concurrency":5,"usage_rules":[{"window_seconds":3600,"quota_limit":200,"enabled":true}]}`)
+	require.True(t, response.Success, response.Message)
+	assert.Equal(t, 5, response.Data.MaxConcurrency)
+	model.RecordUserUsageWindows(operator.Id, 30)
+	response = performUserLimitsRequest(t, ResetUserLimitWindows, http.MethodPost, operator.Id, common.RoleRootUser, `{}`)
+	require.True(t, response.Success, response.Message)
+	require.Len(t, response.Data.UsageRules, 1)
+	assert.Zero(t, response.Data.UsageRules[0].UsedQuota, "root can reset own limit window")
 }
 
 func TestGetSelfLimitsShowsOnlyEnabledRules(t *testing.T) {

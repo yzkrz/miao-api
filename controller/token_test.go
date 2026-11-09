@@ -48,7 +48,7 @@ func TestAdminUserTokens(t *testing.T) {
 	model.LOG_DB = logDB
 	require.NoError(t, authz.Init(db))
 	operator := createQuotaTestOperator(t, db, common.RoleAdminUser)
-	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: true}}))
+	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: false}}))
 	require.NoError(t, model.PublishUserAuthCache(operator.Id))
 	bundle, err := service.CreateLoginSession(operator.Id, "password", "127.0.0.1", "admin-tokens-test")
 	require.NoError(t, err)
@@ -134,6 +134,27 @@ func TestAdminUserTokens(t *testing.T) {
 	proof = proofFor(target.Id, "reveal", []int{owned.Id}, 0)
 	require.NoError(t, db.Model(&model.AuthFlow{}).Where("user_id = ? AND purpose = ?", operator.Id, model.AuthFlowPurposeSecurityProof).Update("expires_at", time.Now().Add(-time.Minute)).Error)
 	assert.Equal(t, 403, request("POST", target.Id, keyPath, "", proof).Code, "expired proof cannot disclose a key")
+	jwt, sessionIdentity := bundle.AccessToken, identity
+	for _, tc := range []struct {
+		scope      string
+		listStatus int
+	}{
+		{"user:read", http.StatusOK},
+		{"user:write", http.StatusForbidden},
+		{"audit:read", http.StatusForbidden},
+	} {
+		pat, accessToken := createScopedAccessToken(t, operator.Id, 0, tc.scope)
+		bundle.AccessToken = pat
+		identity = service.AuthIdentity{UserID: operator.Id, SessionID: model.AccessTokenSessionID(accessToken.Id), SessionVersion: model.AccessTokenSessionVersion, UserAuthVersion: operator.AuthVersion}
+		assert.Equal(t, tc.listStatus, request("GET", target.Id, "/", "", "").Code, tc.scope)
+		if tc.scope == "user:write" {
+			response := request("POST", target.Id, keyPath, "", proofFor(target.Id, "reveal", []int{owned.Id}, 0))
+			assert.Contains(t, response.Body.String(), owned.Key, "user:write scope permits verified disclosure")
+		} else {
+			assert.Equal(t, http.StatusForbidden, request("POST", target.Id, keyPath, "", "").Code, tc.scope)
+		}
+	}
+	bundle.AccessToken, identity = jwt, sessionIdentity
 
 	response = request("POST", target.Id, "/", `{"name":"created","user_id":1,"unlimited_quota":true,"expired_time":-1}`, proofFor(target.Id, "create", nil, 1))
 	assert.Contains(t, response.Body.String(), `"success":true`)
@@ -180,14 +201,30 @@ func TestAdminUserTokens(t *testing.T) {
 		assert.NotEmpty(t, audit.Other.Op.Params["user_id"])
 	}
 	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: false}}))
-	assert.Equal(t, 403, request("GET", target.Id, "/", "", "").Code, "permission revocation applies immediately")
-	assert.Equal(t, 403, request("POST", target.Id, "/", `{"name":"revoked","unlimited_quota":true}`, proofFor(target.Id, "create", nil, 1)).Code)
+	assert.Equal(t, 200, request("GET", target.Id, "/", "", "").Code, "audit access is not required")
+	for _, ownerID := range []int{other.Id, operator.Id} {
+		response = request("POST", ownerID, "/", `{"name":"admin-created","unlimited_quota":true}`, proofFor(ownerID, "create", nil, 1))
+		assert.Contains(t, response.Body.String(), `"success":true`, "an administrator can create keys for ordinary users and self")
+	}
 	require.NoError(t, authz.SetUserPermissions(operator.Id, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: true}}))
 	require.NoError(t, db.Model(&operator).Update("role", common.RoleCommonUser).Error)
 	require.NoError(t, model.PublishUserAuthCache(operator.Id))
 	assert.Equal(t, 403, request("GET", target.Id, "/", "", "").Code, "an audit grant does not bypass the administrator requirement")
 	require.NoError(t, db.Model(&operator).Update("role", common.RoleAdminUser).Error)
 	require.NoError(t, model.PublishUserAuthCache(operator.Id))
+	require.NoError(t, db.Model(&operator).Update("role", common.RoleRootUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(operator.Id))
+	assert.Equal(t, 200, request("GET", operator.Id, "/", "", "").Code, "root can list own keys")
+	response = request("POST", operator.Id, "/", `{"name":"root-own-key","unlimited_quota":true}`, proofFor(operator.Id, "create", nil, 1))
+	require.Contains(t, response.Body.String(), `"success":true`)
+	var rootKey model.Token
+	require.NoError(t, db.Where("user_id = ? AND name = ?", operator.Id, "root-own-key").First(&rootKey).Error)
+	response = request("PUT", operator.Id, "/?status_only=true", fmt.Sprintf(`{"id":%d,"status":2}`, rootKey.Id), proofFor(operator.Id, "status", []int{rootKey.Id}, 0))
+	assert.Contains(t, response.Body.String(), `"status":2`)
+	response = request("POST", operator.Id, fmt.Sprintf("/%d/key", rootKey.Id), "", proofFor(operator.Id, "reveal", []int{rootKey.Id}, 0))
+	assert.Contains(t, response.Body.String(), rootKey.Key)
+	response = request("DELETE", operator.Id, fmt.Sprintf("/%d", rootKey.Id), "", proofFor(operator.Id, "delete", []int{rootKey.Id}, 0))
+	assert.Contains(t, response.Body.String(), `"success":true`)
 	require.NoError(t, db.Model(&model.UserSession{}).Where("sid = ?", identity.SessionID).Update("status", model.UserSessionStatusRevoked).Error)
 	assert.Equal(t, 401, request("GET", target.Id, "/", "", "").Code, "revoked sessions cannot manage keys")
 }

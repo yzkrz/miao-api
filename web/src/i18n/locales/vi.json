@@ -7447,6 +7447,7 @@
     "View the generated image": "Xem ảnh đã tạo",
     "View user and admin audit records, and manage their API keys, usage limits, concurrency, and window resets, including your own. Root accounts are excluded.": "Xem nhật ký kiểm toán của người dùng và quản trị viên, quản lý khóa API, hạn mức sử dụng, số yêu cầu đồng thời và đặt lại cửa sổ, bao gồm tài khoản của bạn. Không áp dụng cho tài khoản root.",
     "View user and admin audit records, and manage their usage limits, concurrency, and window resets, including your own. Root accounts are excluded.": "Xem nhật ký kiểm toán của người dùng và quản trị viên, quản lý giới hạn sử dụng, số yêu cầu đồng thời và đặt lại cửa sổ, bao gồm tài khoản của bạn. Không áp dụng cho tài khoản root.",
+    "View user and admin audit records.": "Xem nhật ký kiểm toán của người dùng và quản trị viên.",
     "View users, their sign-in bindings, and permission settings.": "Xem người dùng, liên kết đăng nhập và cài đặt quyền của họ.",
     "View your profile, groups, and available models.": "Xem hồ sơ, nhóm và các mô hình khả dụng.",
     "View your topup transaction records and payment history": "Xem lịch sử giao dịch nạp tiền và lịch sử thanh toán của bạn",

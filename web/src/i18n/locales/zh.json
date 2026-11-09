@@ -7447,6 +7447,7 @@
     "View the generated image": "查看生成的图片",
     "View user and admin audit records, and manage their API keys, usage limits, concurrency, and window resets, including your own. Root accounts are excluded.": "查看用户和管理员的审计记录，并管理其 API 密钥、用量限额、并发数和窗口重置，包括自己的账号。不包括 root 账号。",
     "View user and admin audit records, and manage their usage limits, concurrency, and window resets, including your own. Root accounts are excluded.": "查看普通用户和管理员的审计记录，并管理其时间窗口限额、最大并发数和窗口重置，包括自己的账号。不包含 root 账号。",
+    "View user and admin audit records.": "查看用户和管理员的审计记录。",
     "View users, their sign-in bindings, and permission settings.": "查看用户及其登录绑定和权限设置。",
     "View your profile, groups, and available models.": "查看个人资料、分组和可用模型。",
     "View your topup transaction records and payment history": "查看您的充值交易记录和付款历史",

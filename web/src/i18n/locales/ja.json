@@ -7447,6 +7447,7 @@
     "View the generated image": "生成された画像を表示",
     "View user and admin audit records, and manage their API keys, usage limits, concurrency, and window resets, including your own. Root accounts are excluded.": "自分のアカウントを含むユーザーと管理者の監査ログを閲覧し、API キー、利用上限、同時実行数、ウィンドウのリセットを管理できます。root アカウントは対象外です。",
     "View user and admin audit records, and manage their usage limits, concurrency, and window resets, including your own. Root accounts are excluded.": "一般ユーザーと管理者の監査ログを表示し、自分のアカウントを含む利用上限、同時実行数、期間のリセットを管理します。root アカウントは対象外です。",
+    "View user and admin audit records.": "ユーザーと管理者の監査ログを閲覧します。",
     "View users, their sign-in bindings, and permission settings.": "ユーザー、ログイン連携、権限設定を表示します。",
     "View your profile, groups, and available models.": "プロフィール、グループ、利用可能なモデルを表示します。",
     "View your topup transaction records and payment history": "チャージ取引記録と支払い履歴を表示",

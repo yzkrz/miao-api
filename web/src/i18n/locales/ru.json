@@ -7447,6 +7447,7 @@
     "View the generated image": "Просмотр сгенерированного изображения",
     "View user and admin audit records, and manage their API keys, usage limits, concurrency, and window resets, including your own. Root accounts are excluded.": "Просмотр журналов аудита пользователей и администраторов, управление их API-ключами, лимитами использования, числом одновременных запросов и сбросом окон, включая собственную учётную запись. Учётные записи root исключены.",
     "View user and admin audit records, and manage their usage limits, concurrency, and window resets, including your own. Root accounts are excluded.": "Просмотр журналов аудита пользователей и администраторов и управление их лимитами использования, параллельных запросов и сбросом периодов, включая свою учётную запись. Учётные записи root исключены.",
+    "View user and admin audit records.": "Просмотр журналов аудита пользователей и администраторов.",
     "View users, their sign-in bindings, and permission settings.": "Просмотр пользователей, их привязок для входа и настроек прав.",
     "View your profile, groups, and available models.": "Просмотр профиля, групп и доступных моделей.",
     "View your topup transaction records and payment history": "Просмотреть записи о пополнении счета и историю платежей",

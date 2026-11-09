@@ -49,8 +49,7 @@ const target: User = {
   group: 'default',
 }
 const label = "View other accounts' audit logs"
-const description =
-  'View user and admin audit records, and manage their API keys, usage limits, concurrency, and window resets, including your own. Root accounts are excluded.'
+const description = 'View user and admin audit records.'
 
 function renderPermissions(viewerRole: number, allowed?: boolean) {
   useAuthStore
@@ -209,66 +208,73 @@ it.each([
   { viewer: 10, targetRole: 10, targetId: 2, granted: true, allowed: true },
   { viewer: 10, targetRole: 10, targetId: 1, granted: true, allowed: true },
   { viewer: 10, targetRole: 100, targetId: 2, granted: true, allowed: false },
-  { viewer: 10, targetRole: 10, targetId: 2, granted: false, allowed: false },
+  { viewer: 10, targetRole: 10, targetId: 2, granted: false, allowed: true },
+  { viewer: 10, targetRole: 10, targetId: 1, granted: false, allowed: true },
   { viewer: 10, targetRole: 1, targetId: 2, granted: false, allowed: true },
   { viewer: 100, targetRole: 10, targetId: 2, granted: false, allowed: true },
   { viewer: 1, targetRole: 1, targetId: 2, granted: true, allowed: false },
-  { viewer: 100, targetRole: 100, targetId: 1, granted: true, allowed: false },
-])('usage limits menu follows role and audit access: %j', async (testCase) => {
-  useAuthStore.getState().auth.setUser({
-    id: 1,
-    username: 'operator',
-    role: testCase.viewer,
-    permissions: { admin_permissions: { audit: { read: testCase.granted } } },
-  })
-  vi.spyOn(api, 'get').mockResolvedValue({
-    data: { success: true, data: useAuthStore.getState().auth.user },
-  })
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
-  render(
-    <QueryClientProvider client={client}>
-      <UsersProvider>
-        <DataTableRowActions
-          row={
-            {
-              original: {
-                ...target,
-                id: testCase.targetId,
-                role: testCase.targetRole,
-              },
-            } as Row<User>
-          }
-        />
-      </UsersProvider>
-    </QueryClientProvider>
-  )
-  await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
-  const item = await screen.findByRole('menuitem', { name: 'Usage Limits' })
-  if (testCase.allowed) {
-    expect(item).not.toHaveAttribute('aria-disabled', 'true')
-  } else {
-    expect(item).toHaveAttribute('aria-disabled', 'true')
+  { viewer: 100, targetRole: 100, targetId: 1, granted: false, allowed: true },
+])(
+  'quota, limits and keys menus follow administrator roles: %j',
+  async (testCase) => {
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'operator',
+      role: testCase.viewer,
+      permissions: { admin_permissions: { audit: { read: testCase.granted } } },
+    })
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: useAuthStore.getState().auth.user },
+    })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <UsersProvider>
+          <DataTableRowActions
+            row={
+              {
+                original: {
+                  ...target,
+                  id: testCase.targetId,
+                  role: testCase.targetRole,
+                },
+              } as Row<User>
+            }
+          />
+        </UsersProvider>
+      </QueryClientProvider>
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+    const item = await screen.findByRole('menuitem', { name: 'Usage Limits' })
+    if (testCase.allowed) {
+      expect(item).not.toHaveAttribute('aria-disabled', 'true')
+    } else {
+      expect(item).toHaveAttribute('aria-disabled', 'true')
+    }
+    const keys = screen.getByRole('menuitem', { name: 'Key management' })
+    const canManageKeys =
+      testCase.viewer >= 10 &&
+      (testCase.targetRole < 100 || testCase.viewer === 100)
+    if (canManageKeys) {
+      expect(keys).not.toHaveAttribute('aria-disabled', 'true')
+    } else {
+      expect(keys).toHaveAttribute('aria-disabled', 'true')
+    }
+    const quota = screen.getByRole('menuitem', { name: 'Adjust Quota' })
+    expect(quota.getAttribute('aria-disabled') === 'true').toBe(
+      !testCase.allowed
+    )
   }
-  const keys = screen.getByRole('menuitem', { name: 'Key management' })
-  const canManageKeys =
-    testCase.viewer >= 10 &&
-    testCase.targetRole < 100 &&
-    (testCase.viewer === 100 || testCase.granted)
-  if (canManageKeys) {
-    expect(keys).not.toHaveAttribute('aria-disabled', 'true')
-  } else {
-    expect(keys).toHaveAttribute('aria-disabled', 'true')
-  }
-})
+)
 
 it.each([
   { id: 2, role: 10, name: 'peer administrator' },
   { id: 3, role: 1, name: 'ordinary user' },
   { id: 1, role: 10, name: 'self' },
 ])(
-  'refreshes an audit grant before editing limits for $name',
+  'allows an administrator without an audit grant to edit limits for $name',
   async (targetUser) => {
     const user = userEvent.setup()
     const operator = {
@@ -291,7 +297,7 @@ it.each([
             success: true,
             data: {
               ...operator,
-              permissions: { admin_permissions: { audit: { read: true } } },
+              permissions: { admin_permissions: { audit: { read: false } } },
             },
           },
         }
@@ -355,7 +361,61 @@ it.each([
   }
 )
 
-it.each(['revoked grant', 'changed account'] as const)(
+it.each([
+  { viewer: 10, targetId: 2, targetRole: 10 },
+  { viewer: 10, targetId: 1, targetRole: 10 },
+  { viewer: 100, targetId: 1, targetRole: 100 },
+])(
+  'adjusts quota from the menu without opening account settings: %j',
+  async (testCase) => {
+    const user = userEvent.setup()
+    const operator = { id: 1, username: 'operator', role: testCase.viewer }
+    useAuthStore.getState().auth.setUser(operator)
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: operator },
+    })
+    const post = vi
+      .spyOn(api, 'post')
+      .mockResolvedValue({ data: { success: true } })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <UsersProvider>
+          <DataTableRowActions
+            row={
+              {
+                original: {
+                  ...target,
+                  id: testCase.targetId,
+                  role: testCase.targetRole,
+                },
+              } as Row<User>
+            }
+          />
+        </UsersProvider>
+      </QueryClientProvider>
+    )
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Adjust Quota' }))
+    fireEvent.change(await screen.findByRole('spinbutton'), {
+      target: { value: '1' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Confirm' }))
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/api/user/manage', {
+        id: testCase.targetId,
+        action: 'add_quota',
+        mode: 'add',
+        value: 500000,
+      })
+    )
+    client.clear()
+  }
+)
+
+it.each(['demoted role', 'changed account'] as const)(
   'does not keep stale permission after %s while refreshing the menu',
   async (scenario) => {
     const operator = {
@@ -390,13 +450,14 @@ it.each(['revoked grant', 'changed account'] as const)(
       if (scenario === 'changed account') {
         useAuthStore
           .getState()
-          .auth.setUser({ id: 3, username: 'other-admin', role: 10 })
+          .auth.setUser({ id: 3, username: 'other-user', role: 1 })
       }
       finish({
         data: {
           success: true,
           data: {
             ...operator,
+            role: scenario === 'demoted role' ? 1 : operator.role,
             permissions: {
               admin_permissions: {
                 audit: { read: scenario === 'changed account' },

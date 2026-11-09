@@ -8,7 +8,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -19,7 +18,7 @@ const managedTokenOwnerKey = "managed_token_owner"
 // AuthorizeUserTokenManagement keeps the authenticated operator intact while
 // selecting the owner used by the existing token handlers.
 func AuthorizeUserTokenManagement(c *gin.Context) {
-	if c.GetInt("role") < common.RoleAdminUser || !authz.Can(c.GetInt("id"), c.GetInt("role"), authz.AuditRead) {
+	if c.GetInt("role") < common.RoleAdminUser {
 		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("You do not have permission to perform this action."))
 		c.Abort()
 		return
@@ -36,7 +35,7 @@ func AuthorizeUserTokenManagement(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	if user.Role >= common.RoleRootUser {
+	if user.Role >= common.RoleRootUser && c.GetInt("role") != common.RoleRootUser {
 		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("No permission to access users of same or higher level"))
 		c.Abort()
 		return

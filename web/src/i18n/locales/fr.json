@@ -7447,6 +7447,7 @@
     "View the generated image": "Voir l'image générée",
     "View user and admin audit records, and manage their API keys, usage limits, concurrency, and window resets, including your own. Root accounts are excluded.": "Consultez les journaux d’audit des utilisateurs et administrateurs et gérez leurs clés API, limites d’utilisation, requêtes simultanées et réinitialisations de fenêtres, y compris pour votre compte. Les comptes root sont exclus.",
     "View user and admin audit records, and manage their usage limits, concurrency, and window resets, including your own. Root accounts are excluded.": "Consulter les journaux d’audit des utilisateurs et administrateurs, et gérer leurs limites d’utilisation, leur concurrence et la réinitialisation des fenêtres, y compris pour votre compte. Les comptes root sont exclus.",
+    "View user and admin audit records.": "Consulter les journaux d’audit des utilisateurs et administrateurs.",
     "View users, their sign-in bindings, and permission settings.": "Afficher les utilisateurs, leurs liaisons de connexion et leurs paramètres d’autorisation.",
     "View your profile, groups, and available models.": "Afficher votre profil, vos groupes et les modèles disponibles.",
     "View your topup transaction records and payment history": "Afficher vos enregistrements de transactions de recharge et votre historique de paiement",
