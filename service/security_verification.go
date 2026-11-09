@@ -101,9 +101,9 @@ type AdminUserTokensContext struct {
 }
 
 type AdminUserEmailContext struct {
-    UserID int `json:"user_id"`
-    Email string `json:"email"`
-    Digest string `json:"digest"`
+	UserID int    `json:"user_id"`
+	Email  string `json:"email"`
+	Digest string `json:"digest"`
 }
 
 // AdminUserBindingContext names exactly one binding: a built-in binding type
@@ -226,9 +226,11 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 		}
 		normalized = context
 	case VerificationScopeAdminUserEmail:
-        var context AdminUserEmailContext
-        if len(fields) != 3 || common.Unmarshal(operation.Context, &context) != nil || context.UserID <= 0 || len(context.Digest) != 64 || strings.Trim(context.Digest, "0123456789abcdef") != "" || common.Validate.Var(context.Email, "required,email") != nil { return VerificationBinding{}, ErrVerificationContextInvalid }
-        normalized = context
+		var context AdminUserEmailContext
+		if len(fields) != 3 || common.Unmarshal(operation.Context, &context) != nil || context.UserID <= 0 || len(context.Digest) != 64 || strings.Trim(context.Digest, "0123456789abcdef") != "" || common.Validate.Var(context.Email, "required,email") != nil {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		normalized = context
 	case VerificationScopeAdminUserTokens:
 		var context AdminUserTokensContext
 		if len(fields) != 4 || common.Unmarshal(operation.Context, &context) != nil || context.UserID <= 0 || len(context.TokenIDs) > 1000 {
@@ -245,6 +247,10 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 			}
 		}
 		switch context.Action {
+		case "manage":
+			if len(context.TokenIDs) != 0 || context.Count != 0 {
+				return VerificationBinding{}, ErrVerificationContextInvalid
+			}
 		case "create":
 			if len(context.TokenIDs) != 0 || context.Count < 1 || context.Count > 100 {
 				return VerificationBinding{}, ErrVerificationContextInvalid

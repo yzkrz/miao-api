@@ -3,9 +3,12 @@ package controller
 import (
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -14,6 +17,74 @@ import (
 )
 
 const managedTokenOwnerKey = "managed_token_owner"
+const managedTokenSessionPurpose = "admin_token_management"
+
+type managedTokenAuthorization struct {
+	UserID        int                          `json:"target_user_id"`
+	Authorization *model.AuthFlowAuthorization `json:"authorization"`
+}
+
+// StartUserTokenManagement exchanges a consumed step-up proof for a bounded,
+// revocable capability for this owner. It never stores the password or proof.
+func StartUserTokenManagement(c *gin.Context) {
+	ownerID := tokenRequestOwnerID(c)
+	authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserTokens, service.AdminUserTokensContext{UserID: ownerID, Action: "manage", TokenIDs: []int{}})
+	if authorization == nil {
+		return
+	}
+	payload, err := common.Marshal(managedTokenAuthorization{UserID: ownerID, Authorization: authorization})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	token, flow, err := model.CreateAuthFlow(model.AuthFlowCreate{Purpose: managedTokenSessionPurpose, UserId: authorization.UserID, SessionId: authorization.SessionID, Payload: string(payload), ExpiresAt: time.Now().Add(30 * time.Minute)})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"management_token": token, "expires_at": flow.ExpiresAt.Unix()})
+}
+
+// EndUserTokenManagement revokes only this drawer's capability. Session and
+// owner binding prevent one drawer from revoking another account's capability.
+func EndUserTokenManagement(c *gin.Context) {
+	if !validUserTokenManagement(c) {
+		return
+	}
+	identity, _ := middleware.GetStepUpIdentity(c)
+	_, err := model.ConsumeAuthFlow(strings.TrimSpace(c.GetHeader("X-Key-Management-Session")), model.AuthFlowMatch{Purpose: managedTokenSessionPurpose, UserId: identity.UserID, SessionId: identity.SessionID})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, nil)
+}
+
+func validUserTokenManagement(c *gin.Context) (valid bool) {
+	defer func() {
+		if !valid {
+			c.Set("security_error_code", "SECURITY_PROOF_INVALID")
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "code": "SECURITY_PROOF_INVALID", "message": "Security verification is no longer valid. Please verify again."})
+		}
+	}()
+	identity, ok := middleware.GetStepUpIdentity(c)
+	if !ok {
+		return false
+	}
+	flow, err := model.GetAuthFlow(strings.TrimSpace(c.GetHeader("X-Key-Management-Session")), model.AuthFlowMatch{Purpose: managedTokenSessionPurpose, UserId: identity.UserID, SessionId: identity.SessionID})
+	if err != nil {
+		return false
+	}
+	var state managedTokenAuthorization
+	if common.UnmarshalJsonStr(flow.Payload, &state) != nil || state.UserID != tokenRequestOwnerID(c) {
+		return false
+	}
+	context, err := common.Marshal(service.AdminUserTokensContext{UserID: state.UserID, Action: "manage", TokenIDs: []int{}})
+	if err != nil {
+		return false
+	}
+	return service.ValidateFlowAuthorization(identity, service.VerificationOperation{Scope: service.VerificationScopeAdminUserTokens, Context: context}, state.Authorization) == nil
+}
 
 // AuthorizeUserTokenManagement keeps the authenticated operator intact while
 // selecting the owner used by the existing token handlers.
@@ -61,6 +132,9 @@ func tokenRequestID(c *gin.Context) (int, error) {
 func requireManagedTokenProof(c *gin.Context, action string, ids []int, count int) bool {
 	if _, ok := c.Get(managedTokenOwnerKey); !ok {
 		return true
+	}
+	if c.GetHeader("X-Key-Management-Session") != "" {
+		return validUserTokenManagement(c)
 	}
 	if ids == nil {
 		ids = []int{}

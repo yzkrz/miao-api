@@ -172,6 +172,8 @@ func SetApiRouter(router *gin.Engine) {
 					userTokens.GET("/", controller.GetAllTokens)
 					userTokens.GET("/search", middleware.SearchRateLimit(), controller.SearchTokens)
 					userTokens.GET("/auto-groups", controller.GetTokenAutoGroups)
+					userTokens.POST("/management-session", middleware.CriticalRateLimit(), controller.StartUserTokenManagement)
+					userTokens.DELETE("/management-session", controller.EndUserTokenManagement)
 					userTokens.GET("/models", controller.GetUserModels)
 					userTokens.GET("/groups", controller.GetUserGroups)
 					userTokens.GET("/:token_id", controller.GetToken)

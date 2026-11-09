@@ -25,8 +25,16 @@ import {
 } from '@/features/auth/secure-verification'
 import useDialogState from '@/hooks/use-dialog'
 import { handleServerError } from '@/lib/handle-server-error'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { fetchTokenKey, fetchTokenKeysBatch, type ApiKeysScope } from '../api'
+import {
+  fetchTokenKey,
+  fetchTokenKeysBatch,
+  startKeyManagementSession,
+  endKeyManagementSession,
+  type KeyManagementSession,
+  type ApiKeysScope,
+} from '../api'
 import { ERROR_MESSAGES } from '../constants'
 import type { ApiKey, ApiKeysDialogType } from '../types'
 
@@ -57,7 +65,14 @@ type ApiKeysProviderProps = {
 }
 
 export function ApiKeysProvider(props: ApiKeysProviderProps) {
-  return <ApiKeysSession key={props.owner?.id ?? 'self'} {...props} />
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const sessionId = useAuthStore((state) => state.auth.session?.sid)
+  return (
+    <ApiKeysSession
+      key={`${props.owner?.id ?? 'self'}:${userId ?? ''}:${sessionId ?? ''}`}
+      {...props}
+    />
+  )
 }
 
 function ApiKeysSession(props: ApiKeysProviderProps) {
@@ -66,21 +81,70 @@ function ApiKeysSession(props: ApiKeysProviderProps) {
   const requestVerification = verification.requestVerification
   const ownerId = props.owner?.id
   const ownerName = props.owner?.username
+  const managementSession = useRef<KeyManagementSession | null>(null)
+  const pendingAuthorization = useRef<Promise<{
+    managementSession: string
+  } | null> | null>(null)
+  const alive = useRef(false)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+      const grant = managementSession.current
+      managementSession.current = null
+      if (ownerId !== undefined && grant) {
+        void endKeyManagementSession(ownerId, grant.management_token).catch(
+          () => {}
+        )
+      }
+    }
+  }, [ownerId])
   const scope = useMemo<ApiKeysScope | undefined>(() => {
     if (ownerId === undefined) return undefined
     return {
       userId: ownerId,
-      authorize: async (action, tokenIds, count = 0) => {
-        const proof = await requestVerification({
-          scope: 'admin.user.tokens',
-          context: { user_id: ownerId, action, token_ids: tokenIds, count },
-          title: t('Verify API key management'),
-          description: t(
-            'Confirm your identity before managing API keys for {{username}}.',
-            { username: ownerName }
-          ),
-        })
-        return proof?.proof_token ?? null
+      authorize: async () => {
+        if (!alive.current) return null
+        const grant = managementSession.current
+        if (grant && grant.expires_at > Date.now() / 1000) {
+          return { managementSession: grant.management_token }
+        }
+        if (pendingAuthorization.current) return pendingAuthorization.current
+        const pending = (async () => {
+          const proof = await requestVerification({
+            scope: 'admin.user.tokens',
+            context: {
+              user_id: ownerId,
+              action: 'manage',
+              token_ids: [],
+              count: 0,
+            },
+            title: t('Verify API key management'),
+            description: t(
+              'Confirm your identity before managing API keys for {{username}}.',
+              { username: ownerName }
+            ),
+          })
+          if (!proof || !alive.current) return null
+          const next = await startKeyManagementSession(
+            ownerId,
+            proof.proof_token
+          )
+          if (!alive.current) {
+            await endKeyManagementSession(ownerId, next.management_token).catch(
+              () => {}
+            )
+            return null
+          }
+          managementSession.current = next
+          return { managementSession: next.management_token }
+        })()
+        pendingAuthorization.current = pending
+        try {
+          return await pending
+        } finally {
+          pendingAuthorization.current = null
+        }
       },
     }
   }, [ownerId, ownerName, requestVerification, t])

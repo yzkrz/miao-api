@@ -123,6 +123,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/user/:id/tokens/":                        accessTokenScopeRule("user:read"),
 	"GET /api/user/:id/tokens/search":                  accessTokenScopeRule("user:read"),
 	"GET /api/user/:id/tokens/auto-groups":             accessTokenScopeRule("user:read"),
+	"POST /api/user/:id/tokens/management-session":     accessTokenScopeRule("user:write"),
+	"DELETE /api/user/:id/tokens/management-session":   accessTokenScopeRule("user:write"),
 	"GET /api/user/:id/tokens/models":                  accessTokenScopeRule("user:read"),
 	"GET /api/user/:id/tokens/groups":                  accessTokenScopeRule("user:read"),
 	"GET /api/user/:id/tokens/:token_id":               accessTokenScopeRule("user:read"),

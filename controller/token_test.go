@@ -79,10 +79,16 @@ func TestAdminUserTokens(t *testing.T) {
 	routes.POST("/:token_id/key", GetTokenKey)
 	routes.POST("/batch", DeleteTokenBatch)
 	routes.POST("/batch/keys", GetTokenKeysBatch)
+	routes.POST("/management-session", StartUserTokenManagement)
+	routes.DELETE("/management-session", EndUserTokenManagement)
+	managementToken := ""
 	request := func(method string, userID int, suffix, body, proof string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, fmt.Sprintf("/api/user/%d/tokens%s", userID, suffix), strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+bundle.AccessToken)
 		req.Header.Set("Content-Type", "application/json")
+		if managementToken != "" {
+			req.Header.Set("X-Key-Management-Session", managementToken)
+		}
 		if proof != "" {
 			req.Header.Set("X-Security-Proof", proof)
 		}
@@ -225,8 +231,73 @@ func TestAdminUserTokens(t *testing.T) {
 	assert.Contains(t, response.Body.String(), rootKey.Key)
 	response = request("DELETE", operator.Id, fmt.Sprintf("/%d", rootKey.Id), "", proofFor(operator.Id, "delete", []int{rootKey.Id}, 0))
 	assert.Contains(t, response.Body.String(), `"success":true`)
+	// A verified drawer can manage multiple keys, with owner/session binding,
+	// revocation, expiry and the current verification-method policy enforced.
+	response = request("POST", target.Id, "/management-session", "", proofFor(target.Id, "update", []int{foreign.Id}, 0))
+	assert.Equal(t, 403, response.Code)
+	grantProof := proofFor(target.Id, "manage", nil, 0)
+	response = request("POST", target.Id, "/management-session", "", grantProof)
+	var grantResult struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Token     string `json:"management_token"`
+			ExpiresAt int64  `json:"expires_at"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &grantResult))
+	require.True(t, grantResult.Success, response.Body.String())
+	require.NotEmpty(t, grantResult.Data.Token)
+	assert.InDelta(t, time.Now().Add(30*time.Minute).Unix(), grantResult.Data.ExpiresAt, 2)
+	assert.Equal(t, 403, request("POST", target.Id, "/management-session", "", grantProof).Code)
+	managementToken = grantResult.Data.Token
+	for _, name := range []string{"drawer-first", "drawer-second"} {
+		response = request("POST", target.Id, "/", fmt.Sprintf(`{"name":%q,"unlimited_quota":true}`, name), "")
+		require.Contains(t, response.Body.String(), `"success":true`)
+	}
+	var drawerToken model.Token
+	require.NoError(t, db.Where("name = ?", "drawer-first").First(&drawerToken).Error)
+	response = request("PUT", target.Id, "/?status_only=true", fmt.Sprintf(`{"id":%d,"status":2}`, drawerToken.Id), "")
+	assert.Contains(t, response.Body.String(), `"status":2`)
+	response = request("POST", target.Id, fmt.Sprintf("/%d/key", drawerToken.Id), "", "")
+	assert.Contains(t, response.Body.String(), drawerToken.Key)
+	assert.Equal(t, 403, request("POST", other.Id, "/", `{"name":"wrong-owner","unlimited_quota":true}`, "").Code)
+	response = request("PUT", target.Id, "/", fmt.Sprintf(`{"id":%d,"name":"foreign-write","unlimited_quota":true}`, foreign.Id), "")
+	assert.Contains(t, response.Body.String(), `"success":false`)
+	secondBundle, err := service.CreateLoginSession(operator.Id, "password", "127.0.0.1", "other-drawer-session")
+	require.NoError(t, err)
+	firstAccessToken := bundle.AccessToken
+	bundle.AccessToken = secondBundle.AccessToken
+	assert.Equal(t, 403, request("POST", target.Id, "/", `{"name":"wrong-session","unlimited_quota":true}`, "").Code)
+	bundle.AccessToken = firstAccessToken
+	response = request("DELETE", target.Id, "/management-session", "", "")
+	assert.Contains(t, response.Body.String(), `"success":true`)
+	assert.Equal(t, 403, request("POST", target.Id, "/", `{"name":"closed-drawer","unlimited_quota":true}`, "").Code)
+	managementToken = ""
+	response = request("POST", target.Id, "/management-session", "", proofFor(target.Id, "manage", nil, 0))
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &grantResult))
+	require.True(t, grantResult.Success)
+	managementToken = grantResult.Data.Token
+	require.NoError(t, db.Model(&model.AuthFlow{}).Where("purpose = ?", managedTokenSessionPurpose).Update("expires_at", time.Now().Add(-time.Minute)).Error)
+	assert.Equal(t, 403, request("POST", target.Id, "/", `{"name":"expired-drawer","unlimited_quota":true}`, "").Code)
+	managementToken = ""
+	response = request("POST", target.Id, "/management-session", "", proofFor(target.Id, "manage", nil, 0))
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &grantResult))
+	require.True(t, grantResult.Success)
+	managementToken = grantResult.Data.Token
+	previousPasswordEnabled := common.PasswordLoginEnabled
+	common.PasswordLoginEnabled = false
+	assert.Equal(t, 403, request("POST", target.Id, "/", `{"name":"disabled-method","unlimited_quota":true}`, "").Code)
+	common.PasswordLoginEnabled = previousPasswordEnabled
+	var drawerAudits []model.AuditLog
+	require.NoError(t, model.LOG_DB.Find(&drawerAudits).Error)
+	encodedAudits, err := common.Marshal(drawerAudits)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encodedAudits), managementToken)
+	assert.NotContains(t, string(encodedAudits), grantProof)
+	assert.NotContains(t, string(encodedAudits), drawerToken.Key)
 	require.NoError(t, db.Model(&model.UserSession{}).Where("sid = ?", identity.SessionID).Update("status", model.UserSessionStatusRevoked).Error)
 	assert.Equal(t, 401, request("GET", target.Id, "/", "", "").Code, "revoked sessions cannot manage keys")
+	assert.Equal(t, 401, request("POST", target.Id, "/", `{"name":"revoked","unlimited_quota":true}`, "").Code)
 }
 
 type tokenPageResponse struct {

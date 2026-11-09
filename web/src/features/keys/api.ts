@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api, getUserGroups, getUserModels } from '@/lib/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import type {
   ApiKey,
@@ -43,7 +44,33 @@ export interface ApiKeysScope {
     action: ApiKeyManagementAction,
     tokenIds: number[],
     count?: number
-  ) => Promise<string | null>
+  ) => Promise<string | { managementSession: string } | null>
+}
+
+export interface KeyManagementSession {
+  management_token: string
+  expires_at: number
+}
+
+export async function startKeyManagementSession(
+  userId: number,
+  proof: string
+): Promise<KeyManagementSession> {
+  const response = await api.post(
+    `/api/user/${userId}/tokens/management-session`,
+    undefined,
+    { headers: { 'X-Security-Proof': proof }, singleUseAuthorization: true }
+  )
+  return requireServerSuccess(response.data).data as KeyManagementSession
+}
+
+export async function endKeyManagementSession(
+  userId: number,
+  token: string
+): Promise<void> {
+  await api.delete(`/api/user/${userId}/tokens/management-session`, {
+    headers: { 'X-Key-Management-Session': token },
+  })
 }
 
 function tokenBase(scope?: ApiKeysScope) {
@@ -60,6 +87,9 @@ async function tokenWriteOptions(
   const uniqueIds = [...new Set(ids)].sort((a, b) => a - b)
   const proof = await scope.authorize(action, uniqueIds, count ?? 0)
   if (!proof) throw new DOMException('Verification cancelled', 'AbortError')
+  if (typeof proof !== 'string') {
+    return { headers: { 'X-Key-Management-Session': proof.managementSession } }
+  }
   return { headers: { 'X-Security-Proof': proof } }
 }
 

@@ -63,6 +63,7 @@ export type VerificationOperation =
       context: {
         user_id: number
         action:
+          | 'manage'
           | 'create'
           | 'update'
           | 'status'

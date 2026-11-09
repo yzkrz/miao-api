@@ -192,6 +192,9 @@ it.each([
   'verifies $method above the nested create drawer before creating keys for the target user',
   async (testCase) => {
     const user = userEvent.setup()
+    const revoke = vi
+      .spyOn(api, 'delete')
+      .mockResolvedValue({ data: { success: true } })
     vi.spyOn(api, 'get').mockImplementation(async (url) => {
       if (url === '/api/status') return { data: { success: true, data: {} } }
       if (url === '/api/verify/methods') {
@@ -243,13 +246,21 @@ it.each([
       if (url === '/api/user/42/tokens/batch/create') {
         return { data: { success: true, data: { count: 1 } } }
       }
+      if (url === '/api/user/42/tokens/management-session') {
+        return {
+          data: {
+            success: true,
+            data: { management_token: 'drawer-grant', expires_at: 2000000000 },
+          },
+        }
+      }
       throw new Error(`Unexpected POST ${url}`)
     })
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
     clients.push(client)
-    render(
+    const view = render(
       <QueryClientProvider client={client}>
         <UserApiKeysDrawer
           open
@@ -281,6 +292,12 @@ it.each([
       selector: 'input',
     })
     await waitFor(() => expect(input).toHaveFocus())
+    expect(
+      document.querySelectorAll('[data-slot="sheet-overlay"]')
+    ).toHaveLength(2)
+    expect(
+      document.querySelectorAll('[data-slot="dialog-overlay"]')
+    ).toHaveLength(1)
     expect(post).not.toHaveBeenCalled()
     await user.click(
       within(verification).getByRole('button', { name: 'Cancel' })
@@ -313,7 +330,7 @@ it.each([
             }),
           ],
         },
-        { headers: { 'X-Security-Proof': 'fresh-proof' } }
+        { headers: { 'X-Key-Management-Session': 'drawer-grant' } }
       )
     )
     expect(post).toHaveBeenCalledWith(
@@ -321,7 +338,7 @@ it.each([
       {
         method: testCase.method,
         scope: 'admin.user.tokens',
-        context: { user_id: 42, action: 'create', token_ids: [], count: 1 },
+        context: { user_id: 42, action: 'manage', token_ids: [], count: 0 },
         ...testCase.fields,
       },
       expect.anything()
@@ -332,11 +349,88 @@ it.each([
       ).not.toBeInTheDocument()
     )
     expect(screen.getByRole('dialog', { name: 'Key management' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Create API Key' }))
+    const nextDrawer = await screen.findByRole('dialog', {
+      name: 'Create API Key',
+    })
+    await user.type(
+      within(nextDrawer).getByRole('textbox', { name: 'Name' }),
+      'second-key'
+    )
+    await user.click(
+      within(nextDrawer).getByRole('button', { name: 'Save changes' })
+    )
+    await waitFor(() =>
+      expect(
+        post.mock.calls.filter(
+          ([url]) => url === '/api/user/42/tokens/batch/create'
+        )
+      ).toHaveLength(2)
+    )
+    expect(
+      post.mock.calls.filter(([url]) => url === '/api/verify')
+    ).toHaveLength(1)
+    expect(
+      post.mock.calls.filter(
+        ([url]) => url === '/api/user/42/tokens/management-session'
+      )
+    ).toHaveLength(1)
+    expect(
+      screen.queryByRole('dialog', { name: 'Verify API key management' })
+    ).not.toBeInTheDocument()
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <UserApiKeysDrawer
+          open={false}
+          onOpenChange={() => {}}
+          user={{ id: 42, username: 'owner-42' }}
+        />
+      </QueryClientProvider>
+    )
+    await waitFor(() =>
+      expect(revoke).toHaveBeenCalledWith(
+        '/api/user/42/tokens/management-session',
+        { headers: { 'X-Key-Management-Session': 'drawer-grant' } }
+      )
+    )
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <UserApiKeysDrawer
+          open
+          onOpenChange={() => {}}
+          user={{ id: 42, username: 'owner-42' }}
+        />
+      </QueryClientProvider>
+    )
+    await user.click(
+      await screen.findByRole('button', { name: 'Create API Key' })
+    )
+    const reopened = await screen.findByRole('dialog', {
+      name: 'Create API Key',
+    })
+    await user.type(
+      within(reopened).getByRole('textbox', { name: 'Name' }),
+      'after-reopen'
+    )
+    await user.click(
+      within(reopened).getByRole('button', { name: 'Save changes' })
+    )
+    expect(
+      await screen.findByRole('dialog', { name: 'Verify API key management' })
+    ).toBeVisible()
+    expect(
+      post.mock.calls.filter(
+        ([url]) => url === '/api/user/42/tokens/batch/create'
+      )
+    ).toHaveLength(2)
   }
 )
 
 it('reuses the keys page inside a drawer with owner-scoped search, metadata and disclosure', async () => {
   const user = userEvent.setup()
+  const revoke = vi
+    .spyOn(api, 'delete')
+    .mockResolvedValue({ data: { success: true } })
   const key = apiKeySchema.parse({
     id: 9,
     name: 'owner-42-key',
@@ -412,6 +506,17 @@ it('reuses the keys page inside a drawer with owner-scoped search, metadata and 
     if (url === '/api/user/42/tokens/9/key') {
       return { data: { success: true, data: { key: 'owner-42-secret' } } }
     }
+    if (url.endsWith('/tokens/management-session')) {
+      return {
+        data: {
+          success: true,
+          data: {
+            management_token: `drawer-${url.includes('/42/') ? 42 : 43}`,
+            expires_at: 2000000000,
+          },
+        },
+      }
+    }
     if (url === '/api/user/43/tokens/9/key') {
       return { data: { success: true, data: { key: 'owner-43-secret' } } }
     }
@@ -451,12 +556,12 @@ it('reuses the keys page inside a drawer with owner-scoped search, metadata and 
     '/api/verify',
     expect.objectContaining({
       scope: 'admin.user.tokens',
-      context: { user_id: 42, action: 'reveal', token_ids: [9], count: 0 },
+      context: { user_id: 42, action: 'manage', token_ids: [], count: 0 },
     }),
     expect.anything()
   )
   expect(post).toHaveBeenCalledWith('/api/user/42/tokens/9/key', undefined, {
-    headers: { 'X-Security-Proof': 'fresh-proof' },
+    headers: { 'X-Key-Management-Session': 'drawer-42' },
   })
   await user.click(screen.getByRole('button', { name: 'Create API Key' }))
   const createDrawer = await screen.findByRole('dialog', {
@@ -470,6 +575,12 @@ it('reuses the keys page inside a drawer with owner-scoped search, metadata and 
   expect(get).toHaveBeenCalledWith('/api/user/42/tokens/models')
   expect(get).toHaveBeenCalledWith('/api/user/42/tokens/auto-groups')
   view.rerender(renderDrawer(43))
+  await waitFor(() =>
+    expect(revoke).toHaveBeenCalledWith(
+      '/api/user/42/tokens/management-session',
+      { headers: { 'X-Key-Management-Session': 'drawer-42' } }
+    )
+  )
   await screen.findByText('owner-43-key')
   expect(screen.queryByText('owner-42-key')).not.toBeInTheDocument()
   expect(
