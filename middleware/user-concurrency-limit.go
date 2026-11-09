@@ -52,7 +52,7 @@ func userConcurrencyLimit(midjourney bool) gin.HandlerFunc {
 		}
 		if !acquired {
 			c.Header("Retry-After", strconv.Itoa(service.UserConcurrencyRetryAfterSeconds))
-			message := i18n.T(c, i18n.MsgUserConcurrencyLimit)
+			message := i18n.Translate(i18n.LangEn, i18n.MsgUserConcurrencyLimit)
 			if midjourney {
 				abortWithMidjourneyMessage(c, http.StatusTooManyRequests, constant.MjUserLimitReached, message)
 				return

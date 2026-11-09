@@ -226,6 +226,7 @@ func TestUserConcurrencyLimitRejectsRequestsBeyondTheConfiguredCap(t *testing.T)
 			router := gin.New()
 			router.GET("/:mode", func(c *gin.Context) {
 				c.Set("id", userID)
+				c.Request.Header.Set("Accept-Language", "zh-CN")
 			}, UserConcurrencyLimit(), func(c *gin.Context) {
 				if c.Param("mode") == "hold" {
 					close(entered)
@@ -241,6 +242,7 @@ func TestUserConcurrencyLimitRejectsRequestsBeyondTheConfiguredCap(t *testing.T)
 			assert.Equal(t, http.StatusTooManyRequests, rejected.Code)
 			assert.Equal(t, "5", rejected.Header().Get("Retry-After"))
 			assert.Contains(t, rejected.Body.String(), `"code":"user_concurrency_limit_reached"`)
+			assert.Contains(t, rejected.Body.String(), "Concurrency limit reached. Please reduce concurrency and retry later.")
 
 			close(release)
 			assert.Equal(t, http.StatusOK, <-held)

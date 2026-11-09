@@ -293,30 +293,35 @@ func TestCheckUserUsageLimit(t *testing.T) {
 	}
 }
 
-func TestUserUsageLimitMessageFollowsLanguageAndServerTime(t *testing.T) {
+func TestUserUsageLimitMessageIsEnglishAndUsesServerTime(t *testing.T) {
+	setupUserLimitTestDB(t)
 	previousZone, previousDefault := time.Local, common.DefaultLanguage
 	time.Local = time.FixedZone("server", 5*3600+45*60)
 	common.DefaultLanguage = "zh-CN"
 	t.Cleanup(func() { time.Local, common.DefaultLanguage = previousZone, previousDefault })
 	now := time.Date(2026, 11, 6, 12, 14, 30, 0, time.UTC).Unix()
 	status := UserUsageRuleStatus{WindowSeconds: testFiveHours, ResetAt: now + 2*3600 + 14*60 + 40}
-	const english = "You have reached the 5-hour usage limit. It will reset in 2h 15m, at 2026-11-06 20:15 UTC+05:45 (server time). Please retry after that time."
-	const chinese = "您已达到 5 小时用量限额。 将在 2 小时 15 分钟 后，于 2026-11-06 20:15 UTC+05:45（服务器时间）重置。请在该时间后重试。"
-	const traditional = "您已達到 5 小時用量限額。 將在 2 小時 15 分鐘 後，於 2026-11-06 20:15 UTC+05:45（伺服器時間）重置。請在該時間後重試。"
-	for _, tc := range []struct{ name, language, header, want string }{
-		{"English", "en", "", english},
-		{"Simplified Chinese", "zhCN", "", chinese},
-		{"Traditional Chinese", "zhTW", "", traditional},
-		{"saved language wins", "en", "zh-CN", english},
-		{"request language", "", "zh-TW", traditional},
-		{"server default language", "", "", chinese},
-		{"unsupported language falls back", "fr", "", english},
+	const english = "You have reached the 5-hour usage limit. It will reset in 2 hours 15 minutes, at 2026-11-06 20:15 UTC+05:45 (server time). Please retry after that time."
+	require.NoError(t, model.SaveUserLimitPolicy(testLimitUser, 0, []model.UserUsageRule{{WindowSeconds: testFiveHours, QuotaLimit: testLimitQuota, Enabled: true}}))
+	setUsageWindowState(t, testFiveHours, common.GetTimestamp()-600, testLimitQuota)
+	for _, tc := range []struct{ name, language, header string }{
+		{"English", "en", ""},
+		{"Simplified Chinese", "zhCN", ""},
+		{"Traditional Chinese", "zhTW", ""},
+		{"saved language and header", "en", "zh-CN"},
+		{"request language", "", "zh-TW"},
+		{"server default language", "", ""},
+		{"unsupported language", "fr", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := newUserLimitTestContext()
 			common.SetContextKey(c, constant.ContextKeyUserSetting, dto.UserSetting{Language: tc.language})
 			c.Request.Header.Set("Accept-Language", tc.header)
-			assert.Equal(t, tc.want, userUsageLimitMessage(c, status, now))
+			assert.Equal(t, english, userUsageLimitMessage(status, now))
+			apiErr := CheckUserUsageLimit(c, testLimitUser, 0)
+			require.NotNil(t, apiErr)
+			assert.True(t, strings.HasPrefix(apiErr.Error(), "You have reached the 5-hour usage limit. It will reset in "), apiErr.Error())
+			assert.Contains(t, apiErr.Error(), "UTC+05:45 (server time). Please retry after that time.")
 		})
 	}
 }
@@ -330,19 +335,19 @@ func TestUserUsageLimitMessageRoundsWaitAndResetUp(t *testing.T) {
 		seconds     int64
 		wait, reset string
 	}{
-		{1, "1m", "2026-11-06 12:01"},
-		{60, "1m", "2026-11-06 12:01"},
-		{61, "2m", "2026-11-06 12:02"},
-		{3599, "1h", "2026-11-06 13:00"},
-		{3601, "1h 1m", "2026-11-06 13:01"},
-		{86399, "1d", "2026-11-07 12:00"},
-		{86401, "1d 1h", "2026-11-07 12:01"},
-		{3*86400 + 3*3600 + 20*60, "3d 4h", "2026-11-09 15:20"},
+		{1, "1 minute", "2026-11-06 12:01"},
+		{60, "1 minute", "2026-11-06 12:01"},
+		{61, "2 minutes", "2026-11-06 12:02"},
+		{3599, "1 hour", "2026-11-06 13:00"},
+		{3601, "1 hour 1 minute", "2026-11-06 13:01"},
+		{86399, "24 hours", "2026-11-07 12:00"},
+		{86400, "1 day", "2026-11-07 12:00"},
+		{86401, "1 day 1 hour", "2026-11-07 12:01"},
+		{3*86400 + 3*3600 + 20*60, "3 days 4 hours", "2026-11-09 15:20"},
 	} {
 		t.Run(strconv.FormatInt(tc.seconds, 10), func(t *testing.T) {
-			c, _ := newUserLimitTestContext()
 			status := UserUsageRuleStatus{WindowSeconds: testSevenDays, ResetAt: now + tc.seconds}
-			assert.Equal(t, "You have reached the 7-day usage limit. It will reset in "+tc.wait+", at "+tc.reset+" UTC+00:00 (server time). Please retry after that time.", userUsageLimitMessage(c, status, now))
+			assert.Equal(t, "You have reached the 7-day usage limit. It will reset in "+tc.wait+", at "+tc.reset+" UTC+00:00 (server time). Please retry after that time.", userUsageLimitMessage(status, now))
 		})
 	}
 }
@@ -352,28 +357,20 @@ func TestUserUsageLimitMessageNamesCalendarPeriods(t *testing.T) {
 	time.Local = time.UTC
 	t.Cleanup(func() { time.Local = previous })
 	now := time.Date(2024, 2, 29, 12, 0, 0, 0, time.UTC).Unix()
-	for _, tc := range []struct{ period, reset, chinese, traditional string }{
-		{"day", "2024-03-01 00:00", "本自然日", "本自然日"},
-		{"week", "2024-03-04 00:00", "本自然周", "本自然週"},
-		{"month", "2024-03-01 00:00", "本自然月", "本自然月"},
-		{"quarter", "2024-04-01 00:00", "本自然季度", "本自然季度"},
-		{"year", "2025-01-01 00:00", "本自然年", "本自然年"},
+	for _, tc := range []struct{ period, reset string }{
+		{"day", "2024-03-01 00:00"},
+		{"week", "2024-03-04 00:00"},
+		{"month", "2024-03-01 00:00"},
+		{"quarter", "2024-04-01 00:00"},
+		{"year", "2025-01-01 00:00"},
 	} {
 		t.Run(tc.period, func(t *testing.T) {
 			rule := model.UserUsageRule{WindowSeconds: model.CalendarUsageWindowSeconds(tc.period), Mode: "calendar", CalendarPeriod: tc.period}
 			statuses := BuildUserUsageRuleStatuses([]model.UserUsageRule{rule}, nil, now)
 			require.Len(t, statuses, 1)
-			for _, lang := range []struct{ language, prefix string }{
-				{"en", "You have reached the usage limit for this calendar " + tc.period + "."},
-				{"zhCN", "您已达到" + tc.chinese + "的用量限额。"},
-				{"zhTW", "您已達到" + tc.traditional + "的用量限額。"},
-			} {
-				c, _ := newUserLimitTestContext()
-				common.SetContextKey(c, constant.ContextKeyUserSetting, dto.UserSetting{Language: lang.language})
-				message := userUsageLimitMessage(c, statuses[0], now)
-				assert.True(t, strings.HasPrefix(message, lang.prefix), message)
-				assert.Contains(t, message, tc.reset+" UTC+00:00", lang.language)
-			}
+			message := userUsageLimitMessage(statuses[0], now)
+			assert.True(t, strings.HasPrefix(message, "You have reached the usage limit for this calendar "+tc.period+"."), message)
+			assert.Contains(t, message, tc.reset+" UTC+00:00")
 		})
 	}
 }
@@ -392,9 +389,8 @@ func TestUserUsageLimitMessageUsesResetTimeOffsetAcrossDST(t *testing.T) {
 		t.Run(tc.reset, func(t *testing.T) {
 			reset, err := time.Parse(time.RFC3339, tc.reset)
 			require.NoError(t, err)
-			c, _ := newUserLimitTestContext()
 			status := UserUsageRuleStatus{WindowSeconds: testFiveHours, ResetAt: reset.Unix()}
-			assert.Equal(t, "You have reached the 5-hour usage limit. It will reset in 1h, at "+tc.want+" (server time). Please retry after that time.", userUsageLimitMessage(c, status, reset.Unix()-3600))
+			assert.Equal(t, "You have reached the 5-hour usage limit. It will reset in 1 hour, at "+tc.want+" (server time). Please retry after that time.", userUsageLimitMessage(status, reset.Unix()-3600))
 		})
 	}
 	t.Run("calendar day ends after the DST jump", func(t *testing.T) {
@@ -402,8 +398,7 @@ func TestUserUsageLimitMessageUsesResetTimeOffsetAcrossDST(t *testing.T) {
 		rule := model.UserUsageRule{WindowSeconds: 86400, Mode: "calendar", CalendarPeriod: "day"}
 		statuses := BuildUserUsageRuleStatuses([]model.UserUsageRule{rule}, nil, now)
 		require.Len(t, statuses, 1)
-		c, _ := newUserLimitTestContext()
-		assert.Equal(t, "You have reached the usage limit for this calendar day. It will reset in 23h, at 2024-03-11 00:00 UTC-04:00 (server time). Please retry after that time.", userUsageLimitMessage(c, statuses[0], now))
+		assert.Equal(t, "You have reached the usage limit for this calendar day. It will reset in 23 hours, at 2024-03-11 00:00 UTC-04:00 (server time). Please retry after that time.", userUsageLimitMessage(statuses[0], now))
 	})
 }
 

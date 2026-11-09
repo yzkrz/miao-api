@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -132,7 +133,7 @@ func CheckUserUsageLimit(c *gin.Context, userId int, pendingQuota int64, modelNa
 	}
 	c.Header("Retry-After", strconv.FormatInt(max(blocking.ResetAt-now, 1), 10))
 	return types.NewErrorWithStatusCode(
-		errors.New(userUsageLimitMessage(c, *blocking, now)),
+		errors.New(userUsageLimitMessage(*blocking, now)),
 		types.ErrorCodeUserUsageLimitReached,
 		http.StatusTooManyRequests,
 		types.ErrOptionWithSkipRetry(),
@@ -140,8 +141,9 @@ func CheckUserUsageLimit(c *gin.Context, userId int, pendingQuota int64, modelNa
 	)
 }
 
-func userUsageLimitMessage(c *gin.Context, status UserUsageRuleStatus, now int64) string {
-	lang := i18n.StatedLang(c)
+func userUsageLimitMessage(status UserUsageRuleStatus, now int64) string {
+	// Relay limit errors use English independently of the console language.
+	const lang = i18n.LangEn
 	limitKey := i18n.MsgUserUsageLimitReachedHours
 	count := status.WindowSeconds / 3600
 	if status.Mode == "calendar" {
@@ -165,21 +167,28 @@ func userUsageLimitMessage(c *gin.Context, status UserUsageRuleStatus, now int64
 	limit := i18n.Translate(lang, limitKey, map[string]any{"Count": count})
 
 	// Round waiting times up so the displayed delay never suggests an early retry.
-	minutes := (max(status.ResetAt-now, 1) + 59) / 60
-	var parts []string
-	if minutes >= 24*60 {
-		hours := (minutes + 59) / 60
-		parts = append(parts, i18n.Translate(lang, i18n.MsgUserUsageLimitDurationDays, map[string]any{"Count": hours / 24}))
-		if hours%24 > 0 {
-			parts = append(parts, i18n.Translate(lang, i18n.MsgUserUsageLimitDurationHours, map[string]any{"Count": hours % 24}))
-		}
+	seconds := max(status.ResetAt-now, 1)
+	var days, hours, minutes int64
+	if seconds >= 86400 {
+		hours = (seconds + 3599) / 3600
+		days, hours = hours/24, hours%24
 	} else {
-		if minutes >= 60 {
-			parts = append(parts, i18n.Translate(lang, i18n.MsgUserUsageLimitDurationHours, map[string]any{"Count": minutes / 60}))
+		minutes = (seconds + 59) / 60
+		hours, minutes = minutes/60, minutes%60
+	}
+	var parts []string
+	for _, part := range []struct {
+		count int64
+		unit  string
+	}{{days, "day"}, {hours, "hour"}, {minutes, "minute"}} {
+		if part.count == 0 {
+			continue
 		}
-		if minutes%60 > 0 {
-			parts = append(parts, i18n.Translate(lang, i18n.MsgUserUsageLimitDurationMinutes, map[string]any{"Count": minutes % 60}))
+		unit := part.unit
+		if part.count != 1 {
+			unit += "s"
 		}
+		parts = append(parts, fmt.Sprintf("%d %s", part.count, unit))
 	}
 	// Convert after rounding: a DST transition can change the reset time's offset.
 	resetTime := time.Unix(status.ResetAt, 0).Add(59 * time.Second).Truncate(time.Minute).
