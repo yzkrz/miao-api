@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -38,18 +39,75 @@ func (UserLimitPolicy) TableName() string {
 	return "user_limit_policies"
 }
 
-// UserUsageRule caps the quota a user may consume within one fixed window.
+// UserUsageRule caps the selected models' total quota in a fixed or calendar window.
 // WindowSeconds identifies the rule: it is unique per user and keys the window
 // state, so changing only QuotaLimit or Enabled keeps the current window.
 type UserUsageRule struct {
-	WindowSeconds int64 `json:"window_seconds"`
-	QuotaLimit    int64 `json:"quota_limit"`
-	Enabled       bool  `json:"enabled"`
+	WindowSeconds  int64    `json:"window_seconds"`
+	QuotaLimit     int64    `json:"quota_limit"`
+	Enabled        bool     `json:"enabled"`
+	Models         []string `json:"models,omitempty"`
+	Mode           string   `json:"mode,omitempty"`
+	CalendarPeriod string   `json:"calendar_period,omitempty"`
 }
 
-// UserUsageWindow is the fixed-window state of one rule window. A window opens
-// with the first charged settlement after the previous one expired, and its
-// usage is discarded as a whole once WindowStart+WindowSeconds has passed.
+// CalendarUsageWindowSeconds supplies stable identifiers, not calendar durations.
+// Actual boundaries use local calendar arithmetic, including DST and leap years.
+func CalendarUsageWindowSeconds(period string) int64 {
+	switch period {
+	case "day":
+		return 86400
+	case "week":
+		return 7 * 86400
+	case "month":
+		return 30 * 86400
+	case "quarter":
+		return 90 * 86400
+	case "year":
+		return 365 * 86400
+	default:
+		return 0
+	}
+}
+
+func (r UserUsageRule) AppliesTo(modelName string) bool {
+	return len(r.Models) == 0 || slices.Contains(r.Models, modelName)
+}
+
+// Bounds returns the calendar period containing now, or a new fixed window.
+// Natural weeks begin on Monday in the server's time zone.
+func (r UserUsageRule) Bounds(now int64) (int64, int64) {
+	if r.Mode != "calendar" {
+		return now, now + r.WindowSeconds
+	}
+	t := time.Unix(now, 0).In(time.Local)
+	year, month, day := t.Date()
+	start := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
+	var end time.Time
+	switch r.CalendarPeriod {
+	case "day":
+		end = start.AddDate(0, 0, 1)
+	case "week":
+		start = start.AddDate(0, 0, -(int(start.Weekday())+6)%7)
+		end = start.AddDate(0, 0, 7)
+	case "month":
+		start = time.Date(year, month, 1, 0, 0, 0, 0, time.Local)
+		end = start.AddDate(0, 1, 0)
+	case "quarter":
+		start = time.Date(year, time.Month((int(month)-1)/3*3+1), 1, 0, 0, 0, 0, time.Local)
+		end = start.AddDate(0, 3, 0)
+	case "year":
+		start = time.Date(year, time.January, 1, 0, 0, 0, 0, time.Local)
+		end = start.AddDate(1, 0, 0)
+	default:
+		return now, now + r.WindowSeconds
+	}
+	return start.Unix(), end.Unix()
+}
+
+// UserUsageWindow stores one rule's counter. Fixed windows open at the first
+// charge; calendar windows use the server's local calendar period boundaries.
+// Calendar WindowSeconds is a stable rule identifier, not the actual duration.
 // WindowStart 0 means the window has not started.
 type UserUsageWindow struct {
 	Id            int64 `json:"id" gorm:"primaryKey"`
@@ -150,7 +208,8 @@ func InvalidateUserLimitSnapshot(userId int) {
 
 // SaveUserLimitPolicy replaces the policy of a user. Window state of removed
 // windows is deleted, new windows start idle, and existing windows keep their
-// state. An empty policy deletes the policy and all window state.
+// state unless the model scope or reset mode changes. An empty policy deletes
+// the policy and all window state.
 func SaveUserLimitPolicy(userId int, maxConcurrency int, rules []UserUsageRule) error {
 	if userId <= 0 {
 		return errors.New("invalid user id")
@@ -160,6 +219,25 @@ func SaveUserLimitPolicy(userId int, maxConcurrency int, rules []UserUsageRule) 
 		windows = append(windows, rule.WindowSeconds)
 	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		var previous UserLimitPolicy
+		if err := tx.Where("user_id = ?", userId).Limit(1).Find(&previous).Error; err != nil {
+			return err
+		}
+		var oldRules []UserUsageRule
+		if previous.UsageRules != "" {
+			if err := common.UnmarshalJsonStr(previous.UsageRules, &oldRules); err != nil {
+				return err
+			}
+		}
+		for _, rule := range rules {
+			for _, old := range oldRules {
+				if old.WindowSeconds == rule.WindowSeconds && (old.Mode != rule.Mode || old.CalendarPeriod != rule.CalendarPeriod || !slices.Equal(old.Models, rule.Models)) {
+					if err := tx.Where("user_id = ? AND window_seconds = ?", userId, rule.WindowSeconds).Delete(&UserUsageWindow{}).Error; err != nil {
+						return err
+					}
+				}
+			}
+		}
 		staleWindows := tx.Where("user_id = ?", userId)
 		if len(windows) > 0 {
 			staleWindows = staleWindows.Where("window_seconds NOT IN ?", windows)
@@ -222,7 +300,7 @@ func ResetUserUsageWindows(userId int, windowSeconds int64) error {
 // that has usage rules; refunds pass a negative quota. Disabled rules are
 // recorded too, so enabling a rule again keeps its current window. Failures are
 // logged and never change the charge itself.
-func RecordUserUsageWindows(userId int, quota int) {
+func RecordUserUsageWindows(userId int, quota int, modelNames ...string) {
 	if userId <= 0 || quota == 0 {
 		return
 	}
@@ -235,8 +313,15 @@ func RecordUserUsageWindows(userId int, quota int) {
 		return
 	}
 	now := common.GetTimestamp()
+	modelName := ""
+	if len(modelNames) > 0 {
+		modelName = modelNames[0]
+	}
 	for _, rule := range snapshot.Rules {
-		if err := addUserUsageWindowQuota(userId, rule.WindowSeconds, int64(quota), now); err != nil {
+		if !rule.AppliesTo(modelName) {
+			continue
+		}
+		if err := addUserUsageRuleQuota(userId, rule, int64(quota), now); err != nil {
 			common.SysError(common.LogText("failed to record user usage window: user %d, window %d, %s", userId, rule.WindowSeconds, err.Error()))
 		}
 	}
@@ -246,24 +331,33 @@ func userUsageWindowQuery(userId int, windowSeconds int64) *gorm.DB {
 	return DB.Model(&UserUsageWindow{}).Where("user_id = ? AND window_seconds = ?", userId, windowSeconds)
 }
 
-// addUserUsageWindowQuota applies one delta with single-statement conditional
+// addUserUsageRuleQuota applies one delta with single-statement conditional
 // updates instead of SELECT ... FOR UPDATE: SQLite has no row locks, and a
 // read-then-write transaction there can lose updates under concurrency. Every
 // statement sets either one column or constants only, so the result does not
 // depend on the order in which the database evaluates SET assignments. State
 // rows are created when the policy is saved, never here.
-func addUserUsageWindowQuota(userId int, windowSeconds int64, delta int64, now int64) error {
-	const activeCondition = "window_start > 0 AND window_start + window_seconds > ?"
+func addUserUsageRuleQuota(userId int, rule UserUsageRule, delta int64, now int64) error {
+	windowSeconds := rule.WindowSeconds
+	activeCondition := "window_start > 0 AND window_start + window_seconds > ?"
+	expiredCondition := "(window_start = 0 OR window_start + window_seconds <= ?)"
+	boundary, newStart := now, now
+	if rule.Mode == "calendar" {
+		boundary, _ = rule.Bounds(now)
+		newStart = boundary
+		activeCondition = "window_start = ?"
+		expiredCondition = "window_start != ?"
+	}
 	if delta < 0 {
 		// A refund only lowers the window it may belong to; once that window
 		// has ended, the charge it refunds no longer counts anywhere.
 		return userUsageWindowQuery(userId, windowSeconds).
-			Where(activeCondition, now).
+			Where(activeCondition, boundary).
 			Update("used_quota", gorm.Expr("CASE WHEN used_quota + ? > 0 THEN used_quota + ? ELSE 0 END", delta, delta)).Error
 	}
 	for range userUsageWindowUpdateAttempts {
 		result := userUsageWindowQuery(userId, windowSeconds).
-			Where(activeCondition, now).
+			Where(activeCondition, boundary).
 			Update("used_quota", gorm.Expr("used_quota + ?", delta))
 		if result.Error != nil {
 			return result.Error
@@ -272,8 +366,8 @@ func addUserUsageWindowQuota(userId int, windowSeconds int64, delta int64, now i
 			return nil
 		}
 		result = userUsageWindowQuery(userId, windowSeconds).
-			Where("(window_start = 0 OR window_start + window_seconds <= ?)", now).
-			Updates(map[string]any{"window_start": now, "used_quota": delta})
+			Where(expiredCondition, boundary).
+			Updates(map[string]any{"window_start": newStart, "used_quota": delta})
 		if result.Error != nil {
 			return result.Error
 		}

@@ -29,6 +29,9 @@ export const DAY_SECONDS = 86400
 export type UsageWindowStatus = 'idle' | 'active' | 'exhausted'
 
 export interface UsageRuleStatus {
+  models?: string[]
+  mode?: 'window' | 'calendar'
+  calendar_period?: CalendarPeriod
   window_seconds: number
   quota_limit: number
   enabled: boolean
@@ -40,10 +43,48 @@ export interface UsageRuleStatus {
 
 /** Usage limits and concurrency cap an administrator set for one user. */
 export interface UserLimits {
+  server_time_zone?: string
   max_concurrency: number
   current_concurrency: number
   usage_rules: UsageRuleStatus[]
   updated_at: number
+}
+
+export type CalendarPeriod = 'day' | 'week' | 'month' | 'quarter' | 'year'
+export const CALENDAR_WINDOWS: Record<CalendarPeriod, number> = {
+  day: 86400,
+  week: 604800,
+  month: 2592000,
+  quarter: 7776000,
+  year: 31536000,
+}
+
+export function formatCalendarPeriod(
+  period: CalendarPeriod,
+  t: TFunction
+): string {
+  switch (period) {
+    case 'day':
+      return t('Calendar day')
+    case 'week':
+      return t('Calendar week')
+    case 'month':
+      return t('Calendar month')
+    case 'quarter':
+      return t('Calendar quarter')
+    case 'year':
+      return t('Calendar year')
+  }
+}
+
+export function formatUsageRuleWindow(
+  rule: UsageRuleStatus,
+  t: TFunction
+): string {
+  if (rule.mode === 'calendar' && rule.calendar_period) {
+    return formatCalendarPeriod(rule.calendar_period, t)
+  }
+  return formatUsageWindow(rule.window_seconds, t)
 }
 
 /** Window length as "5 hours" or "7 days"; whole days read as days. */

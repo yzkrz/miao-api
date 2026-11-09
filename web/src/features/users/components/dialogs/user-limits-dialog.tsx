@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -55,11 +55,18 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { safeNumberFieldProps } from '@/features/system-settings/utils/numeric-field'
+import { quotaUnitsToDollars, quotaUnitsToEditableAmount } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
-import { formatUsageWindow, type UsageRuleStatus } from '@/lib/usage-limits'
+import {
+  formatUsageWindow,
+  formatUsageRuleWindow,
+  type UsageRuleStatus,
+} from '@/lib/usage-limits'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import {
   getUserLimits,
+  getUserLimitModels,
   resetUserLimitWindows,
   updateUserLimits,
 } from '../../api'
@@ -84,6 +91,9 @@ interface UserLimitsDialogProps {
  */
 export function UserLimitsDialog(props: UserLimitsDialogProps) {
   const { t } = useTranslation()
+  useSystemConfigStore((state) => state.config.currency)
+  const displayScale = quotaUnitsToDollars(1)
+  const previousScale = useRef(displayScale)
   const queryClient = useQueryClient()
   const userId = props.user.id
   const queryKey = useMemo(() => ['user-limits', userId], [userId])
@@ -95,6 +105,11 @@ export function UserLimitsDialog(props: UserLimitsDialogProps) {
     queryFn: () => getUserLimits(userId),
     enabled: false,
   })
+  const modelsQuery = useQuery({
+    queryKey: ['user-limit-models', userId],
+    queryFn: () => getUserLimitModels(userId),
+    enabled: props.open,
+  })
   const schema = useMemo(() => createUserLimitsFormSchema(t), [t])
   const form = useForm<UserLimitsFormValues>({
     resolver: zodResolver(schema),
@@ -105,6 +120,21 @@ export function UserLimitsDialog(props: UserLimitsDialogProps) {
   )
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [pendingReset, setPendingReset] = useState<number | null>(null)
+
+  // Keep the quota represented by unsaved inputs when display currency changes.
+  useEffect(() => {
+    const oldScale = previousScale.current
+    previousScale.current = displayScale
+    if (oldScale === displayScale || loadState !== 'ready') return
+    for (const [index, rule] of form.getValues('usage_rules').entries()) {
+      const units = Math.round(rule.quota_amount / oldScale)
+      form.setValue(
+        `usage_rules.${index}.quota_amount`,
+        quotaUnitsToEditableAmount(units),
+        { shouldValidate: true }
+      )
+    }
+  }, [displayScale, form, loadState])
 
   useEffect(() => {
     if (!props.open) return
@@ -166,6 +196,7 @@ export function UserLimitsDialog(props: UserLimitsDialogProps) {
   })
 
   const formReady = loadState === 'ready'
+  const resetRule = savedRules.get(pendingReset ?? 0)
 
   return (
     <>
@@ -237,10 +268,19 @@ export function UserLimitsDialog(props: UserLimitsDialogProps) {
                 <SideDrawerSection>
                   <UsageRulesField
                     control={form.control}
+                    candidates={modelsQuery.data ?? []}
+                    modelsLoading={modelsQuery.isPending || modelsQuery.isError}
+                    serverTimeZone={limits?.server_time_zone}
                     savedRules={savedRules}
                     resetting={resetMutation.isPending}
                     onResetWindow={setPendingReset}
                   />
+                  {modelsQuery.isError && (
+                    <ErrorState
+                      title={t('Failed to load models')}
+                      onRetry={() => void modelsQuery.refetch()}
+                    />
+                  )}
                 </SideDrawerSection>
               </form>
             </Form>
@@ -263,15 +303,25 @@ export function UserLimitsDialog(props: UserLimitsDialogProps) {
       <ConfirmDialog
         open={pendingReset !== null}
         onOpenChange={(open) => !open && setPendingReset(null)}
-        title={t('End current window')}
+        title={
+          resetRule?.mode === 'calendar'
+            ? t('Reset usage window')
+            : t('End current window')
+        }
         desc={t(
-          'End the current {{window}} window of {{username}}? Its usage is cleared, and the next charged request starts a new window.',
+          resetRule?.mode === 'calendar'
+            ? 'Clear usage for {{window}} of {{username}}? The calendar reset time stays unchanged.'
+            : 'End the current {{window}} window of {{username}}? Its usage is cleared, and the next charged request starts a new window.',
           {
-            window: formatUsageWindow(pendingReset ?? 0, t),
+            window: resetRule
+              ? formatUsageRuleWindow(resetRule, t)
+              : formatUsageWindow(pendingReset ?? 0, t),
             username: props.user.username || `#${userId}`,
           }
         )}
-        confirmText={t('End window')}
+        confirmText={
+          resetRule?.mode === 'calendar' ? t('Reset') : t('End window')
+        }
         isLoading={resetMutation.isPending}
         handleConfirm={() => {
           if (pendingReset !== null) resetMutation.mutate(pendingReset)

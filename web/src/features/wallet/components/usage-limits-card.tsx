@@ -23,7 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { Card, CardContent } from '@/components/ui/card'
 import { IconBadge } from '@/components/ui/icon-badge'
 import { UsageRuleProgress } from '@/components/usage-rule-progress'
-import { formatUsageWindow } from '@/lib/usage-limits'
+import { formatUsageRuleWindow } from '@/lib/usage-limits'
 
 import { getSelfLimits } from '../api'
 
@@ -73,8 +73,13 @@ export function UsageLimitsCard() {
                 className='flex min-w-0 flex-col gap-2 rounded-lg border p-3'
               >
                 <span className='text-sm font-medium'>
-                  {formatUsageWindow(rule.window_seconds, t)}
+                  {formatUsageRuleWindow(rule, t)}
                 </span>
+                <p className='text-muted-foreground text-xs break-words'>
+                  {rule.models?.length
+                    ? rule.models.join(', ')
+                    : t('All models')}
+                </p>
                 <UsageRuleProgress rule={rule} />
               </li>
             ))}

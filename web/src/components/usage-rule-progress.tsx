@@ -23,6 +23,7 @@ import { Progress } from '@/components/ui/progress'
 import { formatQuota, formatTimestampToDate } from '@/lib/format'
 import type { UsageRuleStatus, UsageWindowStatus } from '@/lib/usage-limits'
 import { cn } from '@/lib/utils'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 const WINDOW_STATUS_BADGES: Record<
   UsageWindowStatus,
@@ -43,6 +44,7 @@ interface UsageRuleProgressProps {
  * the limit, and when the window resets.
  */
 export function UsageRuleProgress(props: UsageRuleProgressProps) {
+  useSystemConfigStore((state) => state.config.currency)
   const { t } = useTranslation()
   const badge = WINDOW_STATUS_BADGES[props.rule.status]
   const percent =
@@ -71,7 +73,7 @@ export function UsageRuleProgress(props: UsageRuleProgressProps) {
         aria-label={t('Usage limit used: {{percent}}%', { percent })}
       />
       <p className='text-muted-foreground text-xs'>
-        {props.rule.status === 'idle'
+        {props.rule.status === 'idle' && props.rule.mode !== 'calendar'
           ? t('Starts with the next charged request')
           : t('Resets at {{time}}', {
               time: formatTimestampToDate(props.rule.reset_at),

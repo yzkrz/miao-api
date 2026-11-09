@@ -225,6 +225,18 @@ export async function getUserLimits(userId: number): Promise<UserLimits> {
   return res.data.data
 }
 
+export interface UserLimitModel {
+  model: string
+  channels: { id: number; name: string; type: number; groups: string[] }[]
+}
+
+export async function getUserLimitModels(
+  userId: number
+): Promise<UserLimitModel[]> {
+  const res = await api.get(`/api/user/${userId}/limits/models`)
+  return requireServerSuccess(res.data).data ?? []
+}
+
 /**
  * Replace a user's usage limit rules and concurrency cap
  */

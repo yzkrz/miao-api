@@ -48,8 +48,16 @@ import { UsageRuleProgress } from '@/components/usage-rule-progress'
 import { safeNumberFieldProps } from '@/features/system-settings/utils/numeric-field'
 import { getCurrencyLabel } from '@/lib/currency'
 import { getEditableQuotaStep } from '@/lib/format'
-import { formatUsageWindow, type UsageRuleStatus } from '@/lib/usage-limits'
+import {
+  CALENDAR_WINDOWS,
+  formatCalendarPeriod,
+  formatUsageWindow,
+  type CalendarPeriod,
+  type UsageRuleStatus,
+} from '@/lib/usage-limits'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
+import type { UserLimitModel } from '../../api'
 import {
   CUSTOM_USAGE_WINDOW,
   MAX_USAGE_RULES,
@@ -58,8 +66,12 @@ import {
   usageRuleWindowSeconds,
   type UserLimitsFormValues,
 } from '../../lib/user-limits-form'
+import { UsageModelSelect } from './usage-model-select'
 
 interface UsageRulesFieldProps {
+  candidates: UserLimitModel[]
+  modelsLoading: boolean
+  serverTimeZone?: string
   control: Control<UserLimitsFormValues>
   /** Saved rules with their current window, keyed by window length. */
   savedRules: Map<number, UsageRuleStatus>
@@ -73,6 +85,14 @@ interface UsageRulesFieldProps {
  */
 export function UsageRulesField(props: UsageRulesFieldProps) {
   const { t } = useTranslation()
+  useSystemConfigStore((state) => state.config.currency)
+  const modes = [
+    { value: 'window', label: t('Window mode') },
+    { value: 'calendar', label: t('Calendar mode') },
+  ]
+  const periods = (Object.keys(CALENDAR_WINDOWS) as CalendarPeriod[]).map(
+    (value) => ({ value, label: formatCalendarPeriod(value, t) })
+  )
   const rules = useFieldArray({
     control: props.control,
     name: 'usage_rules',
@@ -105,55 +125,175 @@ export function UsageRulesField(props: UsageRulesFieldProps) {
       <SideDrawerSectionHeader
         title={t('Usage limit rules')}
         description={t(
-          'Each rule caps the quota this user can spend in a fixed window. A window starts with the first charged request and resets entirely when it ends; requests are rejected once it is used up.'
+          'Window mode starts with the first charged request. Calendar mode resets at server calendar boundaries. Empty model selection applies to all models.'
         )}
       />
+      {props.serverTimeZone && (
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Calendar periods use server time zone: {{zone}}. Weeks start on Monday.',
+            { zone: props.serverTimeZone }
+          )}
+        </p>
+      )}
+      <p className='text-muted-foreground text-xs'>
+        {t('Changing models or reset mode starts a new usage window.')}
+      </p>
       {rules.fields.length > 0 && (
         <ol className='flex flex-col gap-3' aria-label={t('Usage limit rules')}>
           {rules.fields.map((field, index) => {
             const current = values?.[index] ?? field
-            const isCustom = current.window === CUSTOM_USAGE_WINDOW
-            const saved = props.savedRules.get(usageRuleWindowSeconds(current))
+            const isCalendar = current.mode === 'calendar'
+            const isCustom =
+              !isCalendar && current.window === CUSTOM_USAGE_WINDOW
+            const previous = props.savedRules.get(
+              usageRuleWindowSeconds(current)
+            )
+            const sameMode =
+              (previous?.mode || 'window') === (current.mode || 'window')
+            const sameModels =
+              JSON.stringify([...(previous?.models ?? [])].sort()) ===
+              JSON.stringify([...(current.models ?? [])].sort())
+            const saved = sameMode && sameModels ? previous : undefined
             return (
               <li
                 key={field.fieldKey}
                 className='flex flex-col gap-3 rounded-lg border p-3'
               >
+                <FormField
+                  control={props.control}
+                  name={`usage_rules.${index}.mode`}
+                  render={({ field: input }) => (
+                    <FormItem>
+                      <FormLabel className='text-xs'>
+                        {t('Reset mode')}
+                      </FormLabel>
+                      <Select
+                        items={modes}
+                        value={input.value ?? 'window'}
+                        onValueChange={(value) =>
+                          value && input.onChange(value)
+                        }
+                      >
+                        <FormControl>
+                          <SelectTrigger className='w-full'>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectGroup>
+                            {modes.map((item) => (
+                              <SelectItem key={item.value} value={item.value}>
+                                {item.label}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={props.control}
+                  name={`usage_rules.${index}.models`}
+                  render={({ field: input }) => (
+                    <FormItem>
+                      <FormLabel className='text-xs'>
+                        {t('Applicable models')}
+                      </FormLabel>
+                      <FormControl>
+                        <UsageModelSelect
+                          candidates={props.candidates}
+                          selected={input.value ?? []}
+                          onChange={(models) => input.onChange(models)}
+                          disabled={props.modelsLoading}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 <div className='grid items-start gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]'>
-                  <FormField
-                    control={props.control}
-                    name={`usage_rules.${index}.window`}
-                    render={({ field: input }) => (
-                      <FormItem>
-                        <FormLabel className='text-xs'>
-                          {t('Time window')}
-                        </FormLabel>
-                        <Select
-                          items={windowItems}
-                          value={input.value}
-                          onValueChange={(value) =>
-                            value !== null && input.onChange(value)
-                          }
-                        >
-                          <FormControl>
-                            <SelectTrigger className='w-full'>
-                              <SelectValue />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent alignItemWithTrigger={false}>
-                            <SelectGroup>
-                              {windowItems.map((item) => (
-                                <SelectItem key={item.value} value={item.value}>
-                                  {item.label}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  {isCalendar ? (
+                    <FormField
+                      key='calendar-period'
+                      control={props.control}
+                      name={`usage_rules.${index}.calendar_period`}
+                      render={({ field: input }) => (
+                        <FormItem>
+                          <FormLabel className='text-xs'>
+                            {t('Calendar period')}
+                          </FormLabel>
+                          <Select
+                            items={periods}
+                            value={input.value ?? 'day'}
+                            onValueChange={(value) =>
+                              value && input.onChange(value)
+                            }
+                          >
+                            <FormControl>
+                              <SelectTrigger className='w-full'>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectGroup>
+                                {periods.map((item) => (
+                                  <SelectItem
+                                    key={item.value}
+                                    value={item.value}
+                                  >
+                                    {item.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  ) : (
+                    <FormField
+                      key='time-window'
+                      control={props.control}
+                      name={`usage_rules.${index}.window`}
+                      render={({ field: input }) => (
+                        <FormItem>
+                          <FormLabel className='text-xs'>
+                            {t('Time window')}
+                          </FormLabel>
+                          <Select
+                            items={windowItems}
+                            value={input.value}
+                            onValueChange={(value) =>
+                              value !== null && input.onChange(value)
+                            }
+                          >
+                            <FormControl>
+                              <SelectTrigger className='w-full'>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent alignItemWithTrigger={false}>
+                              <SelectGroup>
+                                {windowItems.map((item) => (
+                                  <SelectItem
+                                    key={item.value}
+                                    value={item.value}
+                                  >
+                                    {item.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
                   <FormField
                     control={props.control}
                     name={`usage_rules.${index}.quota_amount`}
@@ -278,7 +418,7 @@ export function UsageRulesField(props: UsageRulesFieldProps) {
                       onClick={() => props.onResetWindow(saved.window_seconds)}
                     >
                       <RotateCcw data-icon='inline-start' aria-hidden='true' />
-                      {t('End window')}
+                      {saved.mode === 'calendar' ? t('Reset') : t('End window')}
                     </Button>
                   </div>
                 )}

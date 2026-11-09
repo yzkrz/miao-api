@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -74,9 +75,25 @@ function renderDialog() {
 }
 
 function mockLoad(limits: UserLimits = savedLimits) {
-  return vi
-    .spyOn(api, 'get')
-    .mockResolvedValue({ data: { success: true, data: limits } })
+  return vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data: String(url).endsWith('/limits/models')
+        ? [
+            {
+              model: 'model-alpha',
+              channels: [{ id: 1, name: 'East', type: 1, groups: ['premium'] }],
+            },
+            {
+              model: 'model-beta',
+              channels: [
+                { id: 2, name: 'West', type: 14, groups: ['default'] },
+              ],
+            },
+          ]
+        : limits,
+    },
+  }))
 }
 
 beforeEach(() => {
@@ -89,6 +106,46 @@ afterEach(() => {
 })
 
 describe('UserLimitsDialog', () => {
+  it('converts unsaved inputs when the configured display unit changes without changing quota', async () => {
+    mockLoad()
+    renderDialog()
+    expect(await screen.findByLabelText('Quota (USD)')).toHaveValue(10)
+    act(() =>
+      useSystemConfigStore.getState().setConfig({
+        currency: {
+          ...DEFAULT_CURRENCY_CONFIG,
+          quotaDisplayType: 'CNY',
+          usdExchangeRate: 7,
+        },
+      })
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText('Quota (CNY)')).toHaveValue(70)
+    )
+    const amount = screen.getByLabelText('Quota (CNY)')
+    fireEvent.change(amount, { target: { value: '140' } })
+    act(() =>
+      useSystemConfigStore.getState().setConfig({
+        currency: { ...DEFAULT_CURRENCY_CONFIG, quotaDisplayType: 'TOKENS' },
+      })
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText('Quota (Tokens)')).toHaveValue(10000000)
+    )
+    act(() =>
+      useSystemConfigStore.getState().setConfig({
+        currency: {
+          ...DEFAULT_CURRENCY_CONFIG,
+          quotaDisplayType: 'CUSTOM',
+          customCurrencySymbol: '€',
+          customCurrencyExchangeRate: 0.9,
+        },
+      })
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText('Quota (€)')).toHaveValue(18)
+    )
+  })
   it('loads the saved policy and shows the current window of each saved rule', async () => {
     const get = mockLoad()
 
@@ -187,15 +244,289 @@ describe('UserLimitsDialog', () => {
   })
 
   it('offers a retry when the policy cannot be loaded', async () => {
-    const get = vi
-      .spyOn(api, 'get')
-      .mockRejectedValueOnce(new Error('network down'))
-      .mockResolvedValue({ data: { success: true, data: savedLimits } })
+    let failed = false
+    const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (String(url).endsWith('/limits/models')) {
+        return { data: { success: true, data: [] } }
+      }
+      if (!failed) {
+        failed = true
+        throw new Error('network down')
+      }
+      return { data: { success: true, data: savedLimits } }
+    })
     renderDialog()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Retry' }))
 
     expect(await screen.findByLabelText('Maximum concurrency')).toHaveValue(2)
-    expect(get).toHaveBeenCalledTimes(2)
+    expect(
+      get.mock.calls.filter(([url]) => url === '/api/user/7/limits')
+    ).toHaveLength(2)
+  })
+
+  it('filters by model-name prefix and saves the selected model scope', async () => {
+    const user = userEvent.setup()
+    mockLoad()
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true, data: savedLimits } })
+    renderDialog()
+    await screen.findByLabelText('Maximum concurrency')
+    await user.click(
+      screen.getByRole('combobox', { name: 'Applicable models' })
+    )
+    await user.type(screen.getByPlaceholderText('Search models'), 'model')
+    await user.click(await screen.findByRole('option', { name: 'model-alpha' }))
+    expect(
+      screen.getByRole('combobox', { name: 'Applicable models' })
+    ).toHaveTextContent('model-alpha')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith(
+        '/api/user/7/limits',
+        expect.objectContaining({
+          usage_rules: [expect.objectContaining({ models: ['model-alpha'] })],
+        })
+      )
+    )
+  })
+
+  it('opens with all models and filters model names by prefix', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+      data: {
+        success: true,
+        data: String(url).endsWith('/limits/models')
+          ? [
+              {
+                model: 'gpt-4.1',
+                channels: [
+                  { id: 1, name: 'East', type: 1, groups: ['premium'] },
+                ],
+              },
+              {
+                model: 'claude-3.7-sonnet',
+                channels: [
+                  { id: 2, name: 'West', type: 14, groups: ['default'] },
+                ],
+              },
+              {
+                model: 'vendor-gpt-4.1',
+                channels: [
+                  { id: 3, name: 'North', type: 1, groups: ['default'] },
+                ],
+              },
+            ]
+          : savedLimits,
+      },
+    }))
+    renderDialog()
+    await screen.findByLabelText('Maximum concurrency')
+    await user.click(
+      screen.getByRole('combobox', { name: 'Applicable models' })
+    )
+
+    expect(await screen.findByRole('option', { name: 'gpt-4.1' })).toBeVisible()
+    expect(
+      screen.getByRole('option', { name: 'claude-3.7-sonnet' })
+    ).toBeVisible()
+    expect(screen.getByRole('option', { name: 'vendor-gpt-4.1' })).toBeVisible()
+
+    await user.type(screen.getByPlaceholderText('Search models'), 'gpt')
+    expect(screen.getByRole('option', { name: 'gpt-4.1' })).toBeVisible()
+    expect(screen.queryByRole('option', { name: 'vendor-gpt-4.1' })).toBeNull()
+    expect(
+      screen.queryByRole('option', { name: 'claude-3.7-sonnet' })
+    ).toBeNull()
+
+    const selectAll = screen.getByRole('checkbox', {
+      name: 'Select all matching models',
+    })
+    await user.click(selectAll)
+    expect(screen.getByRole('option', { name: 'gpt-4.1' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    expect(
+      screen.getByRole('combobox', { name: 'Applicable models' })
+    ).toHaveTextContent('gpt-4.1')
+
+    await user.clear(screen.getByPlaceholderText('Search models'))
+    expect(
+      screen.getByRole('checkbox', { name: 'Select all matching models' })
+    ).not.toBeChecked()
+    await user.click(
+      screen.getByRole('checkbox', { name: 'Select all matching models' })
+    )
+    expect(
+      screen.getByRole('checkbox', { name: 'Select all matching models' })
+    ).toBeChecked()
+    expect(
+      screen.getByRole('combobox', { name: 'Applicable models' })
+    ).toHaveTextContent('+2 more')
+  })
+
+  it('offers only the five natural periods and saves calendar-year rules', async () => {
+    const user = userEvent.setup()
+    mockLoad()
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true, data: savedLimits } })
+    renderDialog()
+    await screen.findByLabelText('Maximum concurrency')
+    await user.click(screen.getByRole('combobox', { name: 'Reset mode' }))
+    await user.click(
+      await screen.findByRole('option', { name: 'Calendar mode' })
+    )
+    expect(
+      screen.getByRole('combobox', { name: 'Calendar period' })
+    ).toHaveTextContent('Calendar day')
+    await user.click(screen.getByRole('combobox', { name: 'Calendar period' }))
+    expect(
+      screen.getAllByRole('option').map((item) => item.textContent)
+    ).toEqual([
+      'Calendar day',
+      'Calendar week',
+      'Calendar month',
+      'Calendar quarter',
+      'Calendar year',
+    ])
+    await user.click(screen.getByRole('option', { name: 'Calendar year' }))
+    expect(
+      screen.queryByRole('combobox', { name: 'Time window' })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith(
+        '/api/user/7/limits',
+        expect.objectContaining({
+          usage_rules: [
+            expect.objectContaining({
+              mode: 'calendar',
+              calendar_period: 'year',
+              window_seconds: 31536000,
+            }),
+          ],
+        })
+      )
+    )
+  })
+
+  it('saves a default calendar day immediately after switching from a five-hour window', async () => {
+    const user = userEvent.setup()
+    mockLoad()
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true, data: savedLimits } })
+    renderDialog()
+    await screen.findByLabelText('Maximum concurrency')
+    await user.click(screen.getByRole('combobox', { name: 'Reset mode' }))
+    await user.click(
+      await screen.findByRole('option', { name: 'Calendar mode' })
+    )
+    expect(
+      screen.getByRole('combobox', { name: 'Calendar period' })
+    ).toHaveTextContent('Calendar day')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith('/api/user/7/limits', {
+        max_concurrency: 2,
+        usage_rules: [
+          {
+            mode: 'calendar',
+            calendar_period: 'day',
+            window_seconds: 86400,
+            quota_limit: 5_000_000,
+            enabled: true,
+          },
+        ],
+      })
+    )
+  })
+
+  it.each([
+    { windowSeconds: 18000, windowLabel: '5 hours' },
+    { windowSeconds: 43200, windowLabel: 'Custom' },
+  ])(
+    'preserves the $windowLabel window and calendar selection across mode switches',
+    async ({ windowSeconds, windowLabel }) => {
+      const user = userEvent.setup()
+      mockLoad({
+        ...savedLimits,
+        usage_rules: [{ ...exhaustedFiveHours, window_seconds: windowSeconds }],
+      })
+      renderDialog()
+      await screen.findByLabelText('Maximum concurrency')
+      expect(
+        screen.getByRole('combobox', { name: 'Time window' })
+      ).toHaveTextContent(windowLabel)
+
+      await user.click(screen.getByRole('combobox', { name: 'Reset mode' }))
+      await user.click(
+        await screen.findByRole('option', { name: 'Calendar mode' })
+      )
+      expect(
+        screen.getByRole('combobox', { name: 'Calendar period' })
+      ).toHaveTextContent('Calendar day')
+      await user.click(
+        screen.getByRole('combobox', { name: 'Calendar period' })
+      )
+      await user.click(
+        await screen.findByRole('option', { name: 'Calendar month' })
+      )
+
+      await user.click(screen.getByRole('combobox', { name: 'Reset mode' }))
+      await user.click(
+        await screen.findByRole('option', { name: 'Window mode' })
+      )
+      expect(
+        screen.getByRole('combobox', { name: 'Time window' })
+      ).toHaveTextContent(windowLabel)
+      if (windowLabel === 'Custom') {
+        expect(
+          screen.getByRole('spinbutton', { name: 'Window length' })
+        ).toHaveValue(12)
+        expect(
+          screen.getByRole('combobox', { name: 'Unit' })
+        ).toHaveTextContent('hours')
+      }
+
+      await user.click(screen.getByRole('combobox', { name: 'Reset mode' }))
+      await user.click(
+        await screen.findByRole('option', { name: 'Calendar mode' })
+      )
+      expect(
+        screen.getByRole('combobox', { name: 'Calendar period' })
+      ).toHaveTextContent('Calendar month')
+      expect(
+        screen.getByRole('spinbutton', { name: 'Quota (USD)' })
+      ).toHaveValue(10)
+    }
+  )
+
+  it('explains that clearing a calendar counter keeps its reset boundary', async () => {
+    const user = userEvent.setup()
+    mockLoad({
+      ...savedLimits,
+      usage_rules: [
+        {
+          ...exhaustedFiveHours,
+          mode: 'calendar',
+          calendar_period: 'day',
+          window_seconds: 86400,
+        },
+      ],
+    })
+    renderDialog()
+    await screen.findByLabelText('Maximum concurrency')
+    await user.click(screen.getByRole('button', { name: 'Reset' }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(within(dialog).getByText('Reset usage window')).toBeInTheDocument()
+    expect(
+      within(dialog).getByText(
+        'Clear usage for Calendar day of alice? The calendar reset time stays unchanged.'
+      )
+    ).toBeInTheDocument()
   })
 })

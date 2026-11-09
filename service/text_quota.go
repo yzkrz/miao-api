@@ -462,7 +462,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		if relayInfo.IsPlayground {
 			model.UpdatePlaygroundUserUsedQuotaAndRequestCount(relayInfo.UserId, summary.Quota)
 		} else {
-			model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, summary.Quota)
+			model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, summary.Quota, relayInfo.OriginModelName)
 		}
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, summary.Quota)
 	}

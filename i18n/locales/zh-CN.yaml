@@ -17,6 +17,7 @@ rate_limit.reached: "您已达到请求数限制：{{.Minutes}}分钟内最多�
 rate_limit.total_reached: "您已达到总请求数限制：{{.Minutes}}分钟内最多请求{{.Max}}次，包括失败次数，请检查您的请求是否正确"
 user_limit.usage_reached_hours: "您已达到 {{.Count}} 小时用量限额。"
 user_limit.usage_reached_days: "您已达到 {{.Count}} 天用量限额。"
+user_limit.usage_reached_calendar: "您已达到当前自然周期的用量限额。"
 user_limit.concurrency_reached: "已达到并发上限，请降低并发后稍后重试。"
 distributor.invalid_request: "无效的请求，{{.Error}}"
 distributor.invalid_channel_id: "无效的渠道 Id"

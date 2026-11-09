@@ -22,9 +22,10 @@ const (
 	MsgRateLimitReached      = "rate_limit.reached"
 	MsgRateLimitTotalReached = "rate_limit.total_reached"
 
-	MsgUserUsageLimitReachedHours = "user_limit.usage_reached_hours"
-	MsgUserUsageLimitReachedDays  = "user_limit.usage_reached_days"
-	MsgUserConcurrencyLimit       = "user_limit.concurrency_reached"
+	MsgUserUsageLimitReachedHours    = "user_limit.usage_reached_hours"
+	MsgUserUsageLimitReachedDays     = "user_limit.usage_reached_days"
+	MsgUserUsageLimitReachedCalendar = "user_limit.usage_reached_calendar"
+	MsgUserConcurrencyLimit          = "user_limit.concurrency_reached"
 
 	MsgDistributorInvalidRequest               = "distributor.invalid_request"
 	MsgDistributorInvalidChannelId             = "distributor.invalid_channel_id"

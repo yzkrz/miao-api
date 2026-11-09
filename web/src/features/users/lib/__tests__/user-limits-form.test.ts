@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { getEditableQuotaStep } from '@/lib/format'
 import type { UserLimits } from '@/lib/usage-limits'
 import {
   DEFAULT_CURRENCY_CONFIG,
@@ -82,6 +83,45 @@ afterEach(() => {
 })
 
 describe('user limits form conversion', () => {
+  it('round-trips calendar models while an empty scope stays applicable to all models', () => {
+    const limits = savedLimits([[31536000, 500000, true]])
+    limits.usage_rules[0] = {
+      ...limits.usage_rules[0],
+      mode: 'calendar',
+      calendar_period: 'year',
+      models: ['beta', 'alpha'],
+    }
+    const values = userLimitsToFormValues(limits)
+    expect(issuePaths(values)).toEqual([])
+    expect(userLimitsFormToPayload(values).usage_rules[0]).toEqual({
+      window_seconds: 31536000,
+      quota_limit: 500000,
+      enabled: true,
+      mode: 'calendar',
+      calendar_period: 'year',
+      models: ['alpha', 'beta'],
+    })
+    values.usage_rules[0].models = []
+    expect(userLimitsFormToPayload(values).usage_rules[0]).not.toHaveProperty(
+      'models'
+    )
+  })
+  it('uses an exact decimal input step so whole CNY amounts are valid', () => {
+    useSystemConfigStore.getState().setConfig({
+      currency: {
+        ...DEFAULT_CURRENCY_CONFIG,
+        quotaDisplayType: 'CNY',
+        usdExchangeRate: 7,
+      },
+    })
+    expect(String(getEditableQuotaStep())).toBe('0.0001')
+    const input = document.createElement('input')
+    input.type = 'number'
+    input.min = '0'
+    input.step = String(getEditableQuotaStep())
+    input.value = '1000'
+    expect(input.validity.stepMismatch).toBe(false)
+  })
   it('maps preset, whole-day and whole-hour windows and USD amounts into form rows', () => {
     const values = userLimitsToFormValues(
       savedLimits([

@@ -130,7 +130,7 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	if relayInfo.IsPlayground {
 		model.UpdatePlaygroundUserUsedQuotaAndRequestCount(relayInfo.UserId, feeQuota)
 	} else {
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, feeQuota)
+		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, feeQuota, relayInfo.OriginModelName)
 	}
 	model.UpdateChannelUsedQuota(relayInfo.ChannelId, feeQuota)
 

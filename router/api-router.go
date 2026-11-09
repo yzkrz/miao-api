@@ -163,6 +163,7 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
 				adminRoute.GET("/:id", controller.GetUser)
 				adminRoute.GET("/:id/limits", controller.GetUserLimits)
+				adminRoute.GET("/:id/limits/models", controller.GetUserLimitModels)
 				adminRoute.PUT("/:id/limits", controller.UpdateUserLimits)
 				adminRoute.POST("/:id/limits/reset", controller.ResetUserLimitWindows)
 				adminRoute.POST("/", controller.CreateUser)

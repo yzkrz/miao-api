@@ -767,6 +767,10 @@ func TestUpdateUserLimitsRejectsInvalidRulesWithoutSaving(t *testing.T) {
 	_, user := setupUserLimitsTest(t)
 	for _, tc := range []struct{ name, body, message string }{
 		{"negative concurrency", `{"max_concurrency":-1}`, "Maximum concurrency must be between 0 and 1000"},
+		{"invalid mode", `{"usage_rules":[{"window_seconds":86400,"quota_limit":100,"mode":"unknown"}]}`, "Invalid usage limit mode or calendar period"},
+		{"calendar custom length", `{"usage_rules":[{"window_seconds":18000,"quota_limit":100,"mode":"calendar","calendar_period":"day"}]}`, "Invalid usage limit mode or calendar period"},
+		{"calendar hour not supported", `{"usage_rules":[{"window_seconds":3600,"quota_limit":100,"mode":"calendar","calendar_period":"hour"}]}`, "Invalid usage limit mode or calendar period"},
+		{"empty model name", `{"usage_rules":[{"window_seconds":86400,"quota_limit":100,"models":[" " ]}]}`, "Invalid model selection"},
 		{"concurrency above the cap", `{"max_concurrency":1001}`, "Maximum concurrency must be between 0 and 1000"},
 		{"window not in whole hours", `{"usage_rules":[{"window_seconds":5400,"quota_limit":100,"enabled":true}]}`, "Usage limit windows must be whole hours between 1 hour and 90 days"},
 		{"window longer than 90 days", `{"usage_rules":[{"window_seconds":7862400,"quota_limit":100,"enabled":true}]}`, "Usage limit windows must be whole hours between 1 hour and 90 days"},
@@ -925,4 +929,129 @@ func TestGetSelfLimitsShowsOnlyEnabledRules(t *testing.T) {
 	assert.Equal(t, 2, response.Data.MaxConcurrency)
 	require.Len(t, response.Data.UsageRules, 1)
 	assert.Equal(t, int64(18000), response.Data.UsageRules[0].WindowSeconds)
+}
+
+func TestUserLimitsModelScopeAndCalendarPeriods(t *testing.T) {
+	db, user := setupUserLimitsTest(t)
+	oldZone := time.Local
+	time.Local = time.FixedZone("UTC+8", 8*3600)
+	t.Cleanup(func() { time.Local = oldZone })
+	rules := []model.UserUsageRule{
+		{WindowSeconds: 86400, QuotaLimit: 100, Enabled: true, Models: []string{"alpha"}},
+		{WindowSeconds: 604800, QuotaLimit: 300, Enabled: true, Mode: "calendar", CalendarPeriod: "week", Models: []string{"beta"}},
+		{WindowSeconds: 31536000, QuotaLimit: 500, Enabled: true, Mode: "calendar", CalendarPeriod: "year"},
+	}
+	body, err := common.Marshal(updateUserLimitsRequest{UsageRules: rules})
+	require.NoError(t, err)
+	response := performUserLimitsRequest(t, UpdateUserLimits, http.MethodPut, user.Id, common.RoleRootUser, string(body))
+	require.True(t, response.Success, response.Message)
+	model.UpdateUserUsedQuotaAndRequestCount(user.Id, 100, "alpha")
+	model.UpdateUserUsedQuotaAndRequestCount(user.Id, 300, "beta")
+	snapshot, err := model.LoadUserLimitSnapshot(user.Id)
+	require.NoError(t, err)
+	windows, err := model.GetUserUsageWindows(user.Id)
+	require.NoError(t, err)
+	states := service.BuildUserUsageRuleStatuses(snapshot.Rules, windows, common.GetTimestamp())
+	require.Len(t, states, 3)
+	assert.EqualValues(t, 100, states[0].UsedQuota)
+	assert.EqualValues(t, 300, states[1].UsedQuota)
+	assert.EqualValues(t, 400, states[2].UsedQuota)
+	assert.Equal(t, "calendar", states[1].Mode)
+	assert.Equal(t, []string{"beta"}, states[1].Models)
+	for i := 1; i < 3; i++ {
+		start, end := rules[i].Bounds(common.GetTimestamp())
+		assert.Equal(t, start, states[i].WindowStart)
+		assert.Equal(t, end, states[i].ResetAt)
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	require.NotNil(t, service.CheckUserUsageLimit(c, user.Id, 0, "alpha"))
+	require.NotNil(t, service.CheckUserUsageLimit(c, user.Id, 0, "beta"))
+	assert.Nil(t, service.CheckUserUsageLimit(c, user.Id, 0, "gamma"), "exhausted model-specific rules do not block other models")
+	model.UpdateUserUsedQuota(user.Id, -30, "alpha")
+	assert.Nil(t, service.CheckUserUsageLimit(c, user.Id, 0, "alpha"))
+	windows, err = model.GetUserUsageWindows(user.Id)
+	require.NoError(t, err)
+	states = service.BuildUserUsageRuleStatuses(snapshot.Rules, windows, common.GetTimestamp())
+	assert.EqualValues(t, 70, states[0].UsedQuota)
+	assert.EqualValues(t, 300, states[1].UsedQuota, "refunds do not reduce another model's allowance")
+	assert.EqualValues(t, 370, states[2].UsedQuota)
+	// Backdate a calendar row to the previous cycle; refund cannot open it.
+	start, _ := rules[1].Bounds(common.GetTimestamp())
+	require.NoError(t, db.Model(&model.UserUsageWindow{}).Where("user_id = ? AND window_seconds = ?", user.Id, 604800).Update("window_start", start-7*86400).Error)
+	model.RecordUserUsageWindows(user.Id, -10, "beta")
+	model.RecordUserUsageWindows(user.Id, 40, "beta")
+	windows, err = model.GetUserUsageWindows(user.Id)
+	require.NoError(t, err)
+	states = service.BuildUserUsageRuleStatuses(snapshot.Rules, windows, common.GetTimestamp())
+	assert.EqualValues(t, 40, states[1].UsedQuota, "a new calendar cycle discards the previous cycle")
+	require.NoError(t, model.SaveUserLimitPolicy(user.Id, 0, rules))
+	windows, err = model.GetUserUsageWindows(user.Id)
+	require.NoError(t, err)
+	states = service.BuildUserUsageRuleStatuses(rules, windows, common.GetTimestamp())
+	assert.EqualValues(t, 70, states[0].UsedQuota, "unchanged policy keeps existing usage")
+	rules[0].Models = []string{"gamma"}
+	require.NoError(t, model.SaveUserLimitPolicy(user.Id, 0, rules))
+	windows, err = model.GetUserUsageWindows(user.Id)
+	require.NoError(t, err)
+	states = service.BuildUserUsageRuleStatuses(rules, windows, common.GetTimestamp())
+	assert.Zero(t, states[0].UsedQuota, "new model scope starts a new counter")
+}
+
+func TestUserLimitCalendarBounds(t *testing.T) {
+	zone, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	previous := time.Local
+	time.Local = zone
+	t.Cleanup(func() { time.Local = previous })
+	for _, tc := range []struct{ period, now, start, end string }{
+		{"day", "2024-03-10 12:00", "2024-03-10 00:00", "2024-03-11 00:00"},
+		{"day", "2024-11-03 12:00", "2024-11-03 00:00", "2024-11-04 00:00"},
+		{"week", "2024-03-10 12:00", "2024-03-04 00:00", "2024-03-11 00:00"},
+		{"month", "2024-02-29 12:00", "2024-02-01 00:00", "2024-03-01 00:00"},
+		{"quarter", "2024-12-31 12:00", "2024-10-01 00:00", "2025-01-01 00:00"},
+		{"year", "2024-12-31 12:00", "2024-01-01 00:00", "2025-01-01 00:00"},
+	} {
+		t.Run(tc.period+tc.now, func(t *testing.T) {
+			now, err := time.ParseInLocation("2006-01-02 15:04", tc.now, zone)
+			require.NoError(t, err)
+			start, end := (model.UserUsageRule{Mode: "calendar", CalendarPeriod: tc.period}).Bounds(now.Unix())
+			assert.Equal(t, tc.start, time.Unix(start, 0).In(zone).Format("2006-01-02 15:04"))
+			assert.Equal(t, tc.end, time.Unix(end, 0).In(zone).Format("2006-01-02 15:04"))
+			nextStart, _ := (model.UserUsageRule{Mode: "calendar", CalendarPeriod: tc.period}).Bounds(end)
+			assert.Equal(t, end, nextStart, "the boundary belongs to the next period")
+		})
+	}
+}
+
+func TestUserLimitModelCandidatesIncludeDisabledChannelsAndUnroutedMetadata(t *testing.T) {
+	db, user := setupUserLimitsTest(t)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Model{}))
+	require.NoError(t, db.Create(&model.Channel{Name: "East", Key: "secret-should-not-be-returned", Models: "alpha,beta", Group: "premium", Status: common.ChannelStatusManuallyDisabled, Type: 1}).Error)
+	require.NoError(t, db.Create(&model.Model{ModelName: "unrouted", NameRule: model.NameRuleExact}).Error)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/user/limits/models", nil)
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(user.Id)}}
+	c.Set("role", common.RoleRootUser)
+	GetUserLimitModels(c)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			Model    string `json:"model"`
+			Channels []struct {
+				Name   string   `json:"name"`
+				Type   int      `json:"type"`
+				Groups []string `json:"groups"`
+			} `json:"channels"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success, recorder.Body.String())
+	require.Len(t, response.Data, 3)
+	assert.Equal(t, []string{"alpha", "beta", "unrouted"}, []string{response.Data[0].Model, response.Data[1].Model, response.Data[2].Model})
+	assert.Equal(t, "East", response.Data[0].Channels[0].Name)
+	assert.Equal(t, []string{"premium"}, response.Data[0].Channels[0].Groups)
+	assert.NotContains(t, recorder.Body.String(), "secret-should-not-be-returned")
 }

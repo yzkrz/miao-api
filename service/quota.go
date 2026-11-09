@@ -146,7 +146,7 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		return fmt.Errorf("token quota is not enough, token remain quota: %s, need quota: %s", logger.FormatQuota(token.RemainQuota), logger.FormatQuota(quota))
 	}
 
-	if apiErr := CheckUserUsageLimit(ctx, relayInfo.UserId, int64(relayInfo.RealtimeChargedQuota)); apiErr != nil {
+	if apiErr := CheckUserUsageLimit(ctx, relayInfo.UserId, int64(relayInfo.RealtimeChargedQuota), relayInfo.OriginModelName); apiErr != nil {
 		return apiErr
 	}
 
@@ -236,7 +236,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		logger.LogError(ctx, common.LogText("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d",
 			relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, modelName, relayInfo.FinalPreConsumedQuota))
 	} else {
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
+		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota, relayInfo.OriginModelName)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
@@ -375,7 +375,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		logger.LogError(ctx, common.LogText("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d",
 			relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, billingModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
+		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota, relayInfo.OriginModelName)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 

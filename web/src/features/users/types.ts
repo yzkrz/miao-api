@@ -147,6 +147,9 @@ export interface ManageUserQuotaPayload {
 
 /** One usage limit rule as the API saves it; quota is in quota units. */
 export interface UserUsageRulePayload {
+  models?: string[]
+  mode?: 'window' | 'calendar'
+  calendar_period?: import('@/lib/usage-limits').CalendarPeriod
   window_seconds: number
   quota_limit: number
   enabled: boolean

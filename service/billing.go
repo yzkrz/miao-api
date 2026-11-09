@@ -51,7 +51,7 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 	// Checked outside the session: an exhausted usage window must not count as
 	// insufficient quota, which would switch the funding source instead.
 	if relayInfo != nil && !relayInfo.IsPlayground {
-		if apiErr := CheckUserUsageLimit(c, relayInfo.UserId, 0); apiErr != nil {
+		if apiErr := CheckUserUsageLimit(c, relayInfo.UserId, 0, relayInfo.OriginModelName); apiErr != nil {
 			return apiErr
 		}
 	}

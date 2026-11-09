@@ -1431,8 +1431,8 @@ func UpdateUserLastLoginAt(id int) {
 	}
 }
 
-func UpdateUserUsedQuotaAndRequestCount(id int, quota int) {
-	RecordUserUsageWindows(id, quota)
+func UpdateUserUsedQuotaAndRequestCount(id int, quota int, modelNames ...string) {
+	RecordUserUsageWindows(id, quota, modelNames...)
 	addUserUsedQuotaAndRequestCount(id, quota)
 }
 
@@ -1453,8 +1453,8 @@ func addUserUsedQuotaAndRequestCount(id int, quota int) {
 }
 
 // UpdateUserUsedQuota adjusts accumulated usage without changing request count.
-func UpdateUserUsedQuota(id int, quota int) {
-	RecordUserUsageWindows(id, quota)
+func UpdateUserUsedQuota(id int, quota int, modelNames ...string) {
+	RecordUserUsageWindows(id, quota, modelNames...)
 	if common.BatchUpdateEnabled {
 		addNewRecord(BatchUpdateTypeUsedQuota, id, quota)
 		return

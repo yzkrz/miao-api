@@ -142,7 +142,9 @@ export function getEditableQuotaStep(): number {
     return 1
   }
 
-  return 10 ** -getCurrencyFractionDigits(0)
+  // Decimal parsing avoids engine-dependent pow rounding (e.g.
+  // 0.00009999999999999999), which causes native stepMismatch for 1000.
+  return Number(`1e-${getCurrencyFractionDigits(0)}`)
 }
 
 // ============================================================================

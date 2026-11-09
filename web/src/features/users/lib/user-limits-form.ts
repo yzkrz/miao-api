@@ -19,7 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 import { z } from 'zod'
 
 import { parseQuotaFromDollars, quotaUnitsToEditableAmount } from '@/lib/format'
-import { DAY_SECONDS, HOUR_SECONDS, type UserLimits } from '@/lib/usage-limits'
+import {
+  CALENDAR_WINDOWS,
+  DAY_SECONDS,
+  HOUR_SECONDS,
+  type UserLimits,
+  type CalendarPeriod,
+} from '@/lib/usage-limits'
 
 import type { UpdateUserLimitsPayload } from '../types'
 
@@ -41,6 +47,9 @@ export const CUSTOM_USAGE_WINDOW = 'custom'
 export type UsageWindowUnit = 'hours' | 'days'
 
 export interface UsageRuleFormValue {
+  models?: string[]
+  mode?: 'window' | 'calendar'
+  calendar_period?: CalendarPeriod
   /** A preset length in seconds as a string, or CUSTOM_USAGE_WINDOW. */
   window: string
   custom_amount: number
@@ -64,6 +73,9 @@ export const NEW_USAGE_RULE: UsageRuleFormValue = {
 }
 
 export function usageRuleWindowSeconds(rule: UsageRuleFormValue): number {
+  if (rule.mode === 'calendar') {
+    return CALENDAR_WINDOWS[rule.calendar_period ?? 'day']
+  }
   if (rule.window !== CUSTOM_USAGE_WINDOW) {
     return Number(rule.window)
   }
@@ -90,6 +102,14 @@ export function createUserLimitsFormSchema(t: Translate) {
       usage_rules: z
         .array(
           z.object({
+            models: z
+              .array(z.string().trim().min(1).max(512))
+              .max(10000)
+              .optional(),
+            mode: z.enum(['window', 'calendar']).optional(),
+            calendar_period: z
+              .enum(['day', 'week', 'month', 'quarter', 'year'])
+              .optional(),
             window: z.string(),
             custom_amount: z.number(),
             custom_unit: z.enum(['hours', 'days']),
@@ -109,6 +129,7 @@ export function createUserLimitsFormSchema(t: Translate) {
       values.usage_rules.forEach((rule, index) => {
         const seconds = usageRuleWindowSeconds(rule)
         if (
+          rule.mode !== 'calendar' &&
           rule.window === CUSTOM_USAGE_WINDOW &&
           (!Number.isInteger(rule.custom_amount) ||
             seconds < HOUR_SECONDS ||
@@ -154,6 +175,10 @@ export function userLimitsToFormValues(
       )
       const inDays = rule.window_seconds % DAY_SECONDS === 0
       return {
+        ...(rule.models?.length ? { models: rule.models } : {}),
+        ...(rule.mode === 'calendar'
+          ? { mode: rule.mode, calendar_period: rule.calendar_period ?? 'day' }
+          : {}),
         window: isPreset ? String(rule.window_seconds) : CUSTOM_USAGE_WINDOW,
         custom_amount: inDays
           ? rule.window_seconds / DAY_SECONDS
@@ -172,6 +197,12 @@ export function userLimitsFormToPayload(
   return {
     max_concurrency: values.max_concurrency,
     usage_rules: values.usage_rules.map((rule) => ({
+      ...(rule.models?.length
+        ? { models: [...new Set(rule.models)].sort() }
+        : {}),
+      ...(rule.mode === 'calendar'
+        ? { mode: rule.mode, calendar_period: rule.calendar_period ?? 'day' }
+        : {}),
       window_seconds: usageRuleWindowSeconds(rule),
       quota_limit: parseQuotaFromDollars(rule.quota_amount),
       enabled: rule.enabled,

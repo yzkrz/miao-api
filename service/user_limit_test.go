@@ -274,10 +274,14 @@ func TestCheckUserUsageLimitLetsRequestsThroughWhenPolicyCannotBeRead(t *testing
 func TestPreConsumeBillingAppliesUsageLimitOutsidePlayground(t *testing.T) {
 	cases := []struct {
 		name       string
+		modelName  string
+		scoped     bool
 		playground bool
 		wantCode   types.ErrorCode
 	}{
 		{name: "relay request is blocked by the used-up window", wantCode: types.ErrorCodeUserUsageLimitReached},
+		{name: "selected original model is blocked", modelName: "alpha", scoped: true, wantCode: types.ErrorCodeUserUsageLimitReached},
+		{name: "another original model reaches ordinary wallet validation", modelName: "beta", scoped: true, wantCode: types.ErrorCodeInsufficientUserQuota},
 		// The user has no wallet quota, so a request that skips the usage
 		// limit fails later with insufficient quota instead.
 		{name: "playground request skips the usage limit", playground: true, wantCode: types.ErrorCodeInsufficientUserQuota},
@@ -286,12 +290,16 @@ func TestPreConsumeBillingAppliesUsageLimitOutsidePlayground(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			setupUserLimitTestDB(t)
 			require.NoError(t, model.DB.Create(&model.User{Id: testLimitUser, Username: "limit_user", Status: common.UserStatusEnabled}).Error)
+			var models []string
+			if tc.scoped {
+				models = []string{"alpha"}
+			}
 			require.NoError(t, model.SaveUserLimitPolicy(testLimitUser, 0, []model.UserUsageRule{
-				{WindowSeconds: testFiveHours, QuotaLimit: testLimitQuota, Enabled: true},
+				{WindowSeconds: testFiveHours, QuotaLimit: testLimitQuota, Enabled: true, Models: models},
 			}))
 			setUsageWindowState(t, testFiveHours, common.GetTimestamp()-600, testLimitQuota)
 			c, _ := newUserLimitTestContext()
-			info := &relaycommon.RelayInfo{UserId: testLimitUser, IsPlayground: tc.playground}
+			info := &relaycommon.RelayInfo{UserId: testLimitUser, IsPlayground: tc.playground, OriginModelName: tc.modelName}
 			info.UserSetting.BillingPreference = "wallet_only"
 
 			apiErr := PreConsumeBilling(c, 10, info)

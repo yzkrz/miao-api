@@ -226,7 +226,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			Description: "quota_not_enough",
 		}
 	}
-	if apiErr := service.CheckUserUsageLimit(c, info.UserId, 0); apiErr != nil {
+	if apiErr := service.CheckUserUsageLimit(c, info.UserId, 0, modelName); apiErr != nil {
 		return service.MidjourneyErrorWrapper(constant.MjUserLimitReached, apiErr.Error())
 	}
 	requestURL := getMjRequestPath(c.Request.URL.String())
@@ -297,7 +297,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			Group:     info.UsingGroup,
 			Other:     other,
 		})
-		model.UpdateUserUsedQuotaAndRequestCount(info.UserId, midjourneyTask.Quota)
+		model.UpdateUserUsedQuotaAndRequestCount(info.UserId, midjourneyTask.Quota, modelName)
 		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)
 	}
 	c.Writer.WriteHeader(mjResp.StatusCode)
@@ -553,7 +553,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		}
 	}
 	if consumeQuota {
-		if apiErr := service.CheckUserUsageLimit(c, relayInfo.UserId, 0); apiErr != nil {
+		if apiErr := service.CheckUserUsageLimit(c, relayInfo.UserId, 0, modelName); apiErr != nil {
 			return service.MidjourneyErrorWrapper(constant.MjUserLimitReached, apiErr.Error())
 		}
 	}
@@ -681,7 +681,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			Group:     relayInfo.UsingGroup,
 			Other:     other,
 		})
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, midjourneyTask.Quota)
+		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, midjourneyTask.Quota, modelName)
 		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)
 	}
 
