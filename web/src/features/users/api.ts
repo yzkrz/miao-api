@@ -24,6 +24,7 @@ import type { CustomOAuthBinding } from '@/lib/oauth'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import type { UserLimits } from '@/lib/usage-limits'
 
+import type { UserEmailDraft } from './lib/user-email'
 import type {
   User,
   GetUsersParams,
@@ -44,6 +45,19 @@ function securityProofConfig(proofToken?: string): AxiosRequestConfig {
     headers: { 'X-Security-Proof': proofToken },
     singleUseAuthorization: true,
   }
+}
+
+export async function sendUserEmail(
+  userId: number,
+  draft: UserEmailDraft,
+  proof: string,
+  signal: AbortSignal
+): Promise<void> {
+  const response = await api.post(`/api/user/${userId}/email`, draft, {
+    ...securityProofConfig(proof),
+    signal,
+  })
+  requireServerSuccess(response.data)
 }
 
 // ============================================================================

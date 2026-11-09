@@ -482,6 +482,7 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'user.quota_add': 'Increased user quota by {{quota}}',
   'user.quota_subtract': 'Decreased user quota by {{quota}}',
   'user.quota_override': 'Overrode user quota from {{from}} to {{to}}',
+  'user.email_send': 'Email delivery to user {{target_user_id}}',
   'user.limits_update': 'Updated usage limits of user {{target_username}}',
   'user.limits_reset': 'Reset usage limit windows of user {{target_username}}',
   'user.binding_clear': 'Cleared {{bindingType}} binding for user {{username}}',

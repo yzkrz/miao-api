@@ -19,6 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'Email delivery to user {{target_user_id}}',
+  'Enter a subject and message. Images must be PNG, JPEG, GIF or WebP, with at most 5 images and 5 MB total.',
+  'Email cannot be sent to a root account.',
+  'This user has no valid email address.',
+  'Email delivery failed. Check the email settings before retrying.',
   'The adjusted price is outside the supported range.',
   'This expression cannot be adjusted automatically. Keep the source price or edit it manually.',
   'Task usage metadata is unavailable. Pricing details cannot be displayed.',

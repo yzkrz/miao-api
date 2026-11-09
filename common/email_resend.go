@@ -37,7 +37,7 @@ func ValidateResendConfiguration(apiKey, from string) error {
 // OWASP Authentication / Session Management / Forgot Password cheat sheets:
 // do not expose credentials, verification codes or reset links in errors/logs.
 // This transport does not change token expiry, single-use or session rules.
-func sendResendEmail(apiKey, from, subject, receiver, content string) error {
+func sendResendEmail(apiKey, from, subject, receiver, content string, images ...InlineEmailImage) error {
 	if err := ValidateResendConfiguration(apiKey, from); err != nil {
 		return err
 	}
@@ -54,12 +54,23 @@ func sendResendEmail(apiKey, from, subject, receiver, content string) error {
 		}
 		to = append(to, recipient.Address)
 	}
+	type attachment struct {
+		Filename    string `json:"filename"`
+		Content     string `json:"content"`
+		ContentType string `json:"content_type"`
+		ContentID   string `json:"content_id"`
+	}
+	attachments := make([]attachment, 0, len(images))
+	for _, image := range images {
+		attachments = append(attachments, attachment{image.Name, image.Content, image.ContentType, image.CID})
+	}
 	payload, err := Marshal(struct {
-		From    string   `json:"from"`
-		To      []string `json:"to"`
-		Subject string   `json:"subject"`
-		HTML    string   `json:"html"`
-	}{sender.String(), to, subject, content})
+		From        string       `json:"from"`
+		To          []string     `json:"to"`
+		Subject     string       `json:"subject"`
+		HTML        string       `json:"html"`
+		Attachments []attachment `json:"attachments,omitempty"`
+	}{sender.String(), to, subject, content, attachments})
 	if err != nil {
 		return NewMessage("Resend request failed")
 	}

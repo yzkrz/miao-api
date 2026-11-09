@@ -166,6 +166,7 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.GET("/:id/limits/models", controller.GetUserLimitModels)
 				adminRoute.PUT("/:id/limits", controller.UpdateUserLimits)
 				adminRoute.POST("/:id/limits/reset", controller.ResetUserLimitWindows)
+				adminRoute.POST("/:id/email", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("admin-email"), middleware.DisableCache(), controller.SendUserEmail)
 				userTokens := adminRoute.Group("/:id/tokens", middleware.DisableCache(), middleware.TokenOperationAudit(), controller.AuthorizeUserTokenManagement)
 				{
 					userTokens.GET("/", controller.GetAllTokens)

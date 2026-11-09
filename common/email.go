@@ -1,10 +1,14 @@
 package common
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"mime/multipart"
+	"mime/quotedprintable"
 	"net/smtp"
+	"net/textproto"
 	"slices"
 	"strings"
 	"time"
@@ -75,7 +79,19 @@ func newSMTPClient(addr string) (*smtp.Client, error) {
 	return client, nil
 }
 
+type InlineEmailImage struct {
+	CID         string `json:"cid"`
+	Name        string `json:"filename"`
+	ContentType string `json:"content_type"`
+	Content     string `json:"content"`
+}
+
 func SendEmail(subject string, receiver string, content string) error {
+	return SendEmailWithImages(subject, receiver, content, nil)
+}
+
+// Images have already been size/type validated by the mail composition service.
+func SendEmailWithImages(subject string, receiver string, content string, images []InlineEmailImage) error {
 	OptionMapRWMutex.RLock()
 	provider := OptionMap["EmailProvider"]
 	resendKey := OptionMap["ResendApiKey"]
@@ -85,7 +101,7 @@ func SendEmail(subject string, receiver string, content string) error {
 	// a failed response does not prove that the first provider did not send.
 	switch provider {
 	case "resend":
-		return sendResendEmail(resendKey, resendFrom, subject, receiver, content)
+		return sendResendEmail(resendKey, resendFrom, subject, receiver, content, images...)
 	case "", "smtp": // Preserve existing installations without a selector.
 	default:
 		return NewMessage("Email sending method must be SMTP or Resend")
@@ -108,6 +124,38 @@ func SendEmail(subject string, receiver string, content string) error {
 		"Message-ID: %s\r\n"+ // 添加 Message-ID 头
 		"Content-Type: text/html; charset=UTF-8\r\n\r\n%s\r\n",
 		receiver, SystemName, SMTPFrom, encodedSubject, time.Now().Format(time.RFC1123Z), id, content))
+	if images != nil {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		header := textproto.MIMEHeader{"Content-Type": {"text/html; charset=UTF-8"}, "Content-Transfer-Encoding": {"quoted-printable"}}
+		part, err := writer.CreatePart(header)
+		if err != nil {
+			return err
+		}
+		encoded := quotedprintable.NewWriter(part)
+		if _, err := encoded.Write([]byte(content)); err != nil {
+			return err
+		}
+		if err := encoded.Close(); err != nil {
+			return err
+		}
+		for _, image := range images {
+			header := textproto.MIMEHeader{"Content-Type": {image.ContentType}, "Content-ID": {"<" + image.CID + ">"}, "Content-Disposition": {"inline"}, "Content-Transfer-Encoding": {"base64"}}
+			part, err := writer.CreatePart(header)
+			if err != nil {
+				return err
+			}
+			for len(image.Content) > 76 {
+				_, _ = part.Write([]byte(image.Content[:76] + "\r\n"))
+				image.Content = image.Content[76:]
+			}
+			_, _ = part.Write([]byte(image.Content + "\r\n"))
+		}
+		if err := writer.Close(); err != nil {
+			return err
+		}
+		mail = []byte(fmt.Sprintf("To: %s\r\nFrom: %s <%s>\r\nSubject: %s\r\nDate: %s\r\nMessage-ID: %s\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=%q\r\n\r\n%s", receiver, SystemName, SMTPFrom, encodedSubject, time.Now().Format(time.RFC1123Z), id, writer.Boundary(), body.String()))
+	}
 	auth := getSMTPAuth()
 	addr := fmt.Sprintf("%s:%d", SMTPServer, SMTPPort)
 	to := strings.Split(receiver, ";")

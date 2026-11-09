@@ -129,6 +129,39 @@ afterEach(() => {
   useAuthStore.getState().auth.reset()
 })
 
+it.each([
+  { viewer: 10, role: 1, email: 'user@example.com', enabled: true },
+  { viewer: 10, role: 10, email: 'admin@example.com', enabled: true },
+  { viewer: 100, role: 100, email: 'root@example.com', enabled: false },
+  { viewer: 10, role: 1, email: '', enabled: false },
+])(
+  'email menu respects recipient role and mailbox: $viewer/$role/$email',
+  async ({ viewer, role, email, enabled }) => {
+    const operator = { id: 1, username: 'operator', role: viewer }
+    useAuthStore.getState().auth.setUser(operator)
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: operator },
+    })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <UsersProvider>
+          <DataTableRowActions
+            row={{ original: { ...target, role, email } } as Row<User>}
+          />
+        </UsersProvider>
+      </QueryClientProvider>
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+    const action = screen.getByRole('menuitem', { name: 'Send email' })
+    if (enabled) expect(action).not.toHaveAttribute('aria-disabled', 'true')
+    else expect(action).toHaveAttribute('aria-disabled', 'true')
+    client.clear()
+  }
+)
+
 it.each([undefined, true])(
   'root can save an audit grant or revocation after step-up verification (previous=%s)',
   async (allowed) => {

@@ -29,6 +29,7 @@ import {
   Link2,
   CreditCard,
   Gauge,
+  Mail,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -64,6 +65,7 @@ import { getUserActionMessage } from '../lib'
 import type { User } from '../types'
 import { UserApiKeysDrawer } from './dialogs/user-api-keys-drawer'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
+import { UserEmailDrawer } from './dialogs/user-email-drawer'
 import { UserLimitsDialog } from './dialogs/user-limits-dialog'
 import { UserQuotaDialog } from './user-quota-dialog'
 import { useUsers } from './users-provider'
@@ -101,6 +103,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
   const [limitsDialogOpen, setLimitsDialogOpen] = useState(false)
   const [keysDrawerOpen, setKeysDrawerOpen] = useState(false)
+  const [emailDrawerOpen, setEmailDrawerOpen] = useState(false)
+  const canSendEmail =
+    !!operator &&
+    operator.role >= USER_ROLE.ADMIN &&
+    user.role < USER_ROLE.ROOT &&
+    !!user.email?.trim()
   const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
 
   const handleEdit = () => {
@@ -305,6 +313,16 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         <DropdownMenuSeparator />
 
         <DropdownMenuItem
+          disabled={!canSendEmail}
+          onClick={() => setEmailDrawerOpen(true)}
+        >
+          {t('Send email')}
+          <DropdownMenuShortcut>
+            <Mail size={16} />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
+
+        <DropdownMenuItem
           disabled={!canManageQuotaAndKeys}
           onClick={() => setQuotaDialogOpen(true)}
         >
@@ -421,6 +439,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           open={keysDrawerOpen}
           onOpenChange={setKeysDrawerOpen}
           user={{ id: user.id, username: user.username }}
+        />
+      )}
+      {canSendEmail && emailDrawerOpen && (
+        <UserEmailDrawer
+          key={user.id}
+          open
+          onOpenChange={setEmailDrawerOpen}
+          user={user}
         />
       )}
     </div>

@@ -46,6 +46,7 @@ const (
 	VerificationScopeAdminUserTwoFADisable = "admin.user.2fa.disable"
 	VerificationScopeAdminUserBindingClear = "admin.user.binding.clear"
 	VerificationScopeAdminUserTokens       = "admin.user.tokens"
+	VerificationScopeAdminUserEmail        = "admin.user.email"
 	verificationScopeAdminUserPrefix       = "admin.user."
 )
 
@@ -97,6 +98,12 @@ type AdminUserTokensContext struct {
 	Action   string `json:"action"`
 	TokenIDs []int  `json:"token_ids"`
 	Count    int    `json:"count"`
+}
+
+type AdminUserEmailContext struct {
+    UserID int `json:"user_id"`
+    Email string `json:"email"`
+    Digest string `json:"digest"`
 }
 
 // AdminUserBindingContext names exactly one binding: a built-in binding type
@@ -218,6 +225,10 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
 		normalized = context
+	case VerificationScopeAdminUserEmail:
+        var context AdminUserEmailContext
+        if len(fields) != 3 || common.Unmarshal(operation.Context, &context) != nil || context.UserID <= 0 || len(context.Digest) != 64 || strings.Trim(context.Digest, "0123456789abcdef") != "" || common.Validate.Var(context.Email, "required,email") != nil { return VerificationBinding{}, ErrVerificationContextInvalid }
+        normalized = context
 	case VerificationScopeAdminUserTokens:
 		var context AdminUserTokensContext
 		if len(fields) != 4 || common.Unmarshal(operation.Context, &context) != nil || context.UserID <= 0 || len(context.TokenIDs) > 1000 {
@@ -370,7 +381,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 		VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 		VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
-		VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear, VerificationScopeAdminUserTokens:
+		VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear, VerificationScopeAdminUserTokens, VerificationScopeAdminUserEmail:
 		if scope == VerificationScopeAccountDelete && state.Role == common.RoleRootUser {
 			return nil, ErrVerificationForbidden
 		}
@@ -435,7 +446,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 			case VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 				VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 				VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
-				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear, VerificationScopeAdminUserTokens:
+				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear, VerificationScopeAdminUserTokens, VerificationScopeAdminUserEmail:
 				methods[i].Available, methods[i].Reason = false, "Password authentication is disabled."
 			}
 		}

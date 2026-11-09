@@ -47,11 +47,16 @@ export type SecurityProofScope =
   | 'admin.user.2fa.disable'
   | 'admin.user.binding.clear'
   | 'admin.user.tokens'
+  | 'admin.user.email'
 
 /** ManageUser actions that change a user's status or role and need step-up. */
 export type AdminUserManageAction = 'disable' | 'enable' | 'promote' | 'demote'
 
 export type VerificationOperation =
+  | {
+      scope: 'admin.user.email'
+      context: { user_id: number; email: string; digest: string }
+    }
   | { scope: 'channel.key.read'; context: { channel_id: number } }
   | {
       scope: 'admin.user.tokens'

@@ -119,6 +119,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/user/:id/limits/models":                  accessTokenScopeRule("user:read"),
 	"PUT /api/user/:id/limits":                         accessTokenScopeRule("user:write"),
 	"POST /api/user/:id/limits/reset":                  accessTokenScopeRule("user:write"),
+	"POST /api/user/:id/email":                         accessTokenScopeRule("user:write"),
 	"GET /api/user/:id/tokens/":                        accessTokenScopeRule("user:read"),
 	"GET /api/user/:id/tokens/search":                  accessTokenScopeRule("user:read"),
 	"GET /api/user/:id/tokens/auto-groups":             accessTokenScopeRule("user:read"),
