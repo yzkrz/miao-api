@@ -99,10 +99,10 @@ func ResendEmailBinding(identity AuthSessionIdentity, token, newCodeHash, oldCod
 // must not grant access after an email was cleared or changed on another node.
 func HasVerifiedEmailForAPI(userID int) (bool, error) {
 	var user User
-	if err := DB.Select("role", "email", "email_verified").First(&user, userID).Error; err != nil {
+	if err := DB.Select("role", "email", "email_verified", "allow_without_email").First(&user, userID).Error; err != nil {
 		return false, err
 	}
-	return user.Role == common.RoleRootUser || (NormalizeEmail(user.Email) != "" && user.EmailVerified), nil
+	return user.Role == common.RoleRootUser || user.AllowWithoutEmail || (NormalizeEmail(user.Email) != "" && user.EmailVerified), nil
 }
 
 // CompleteEmailBinding commits failed attempts even though verification fails.

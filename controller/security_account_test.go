@@ -950,6 +950,7 @@ func TestEmailRequirementLegacyMigrationAndVerification(t *testing.T) {
 	// A pre-feature database has all existing columns and indexes except this
 	// new marker. Exercise an upgrade twice, retaining existing user data.
 	require.NoError(t, model.DB.Migrator().DropColumn(&model.User{}, "email_verified"))
+	require.NoError(t, model.DB.Migrator().DropColumn(&model.User{}, "allow_without_email"))
 	require.NoError(t, model.DB.Model(user).Updates(map[string]any{"email": "legacy@example.com", "quota": 12345}).Error)
 	for range 2 {
 		require.NoError(t, model.DB.AutoMigrate(&model.User{}))
@@ -960,6 +961,7 @@ func TestEmailRequirementLegacyMigrationAndVerification(t *testing.T) {
 	assert.Equal(t, user.Password, stored.Password)
 	assert.Equal(t, 12345, stored.Quota)
 	assert.False(t, stored.EmailVerified)
+	assert.False(t, stored.AllowWithoutEmail)
 	assert.True(t, model.DB.Migrator().HasIndex(&model.User{}, "idx_users_username"))
 	require.NoError(t, model.PublishUserAuthCache(user.Id))
 	token := &model.Token{UserId: user.Id, Key: strings.Repeat("a", 48), Status: common.TokenStatusEnabled, UnlimitedQuota: true, ExpiredTime: -1}
@@ -992,6 +994,24 @@ func TestEmailRequirementLegacyMigrationAndVerification(t *testing.T) {
 	require.NoError(t, update.Update(false))
 	assert.False(t, update.EmailVerified)
 	assert.Equal(t, http.StatusForbidden, emailGateRequest(user.Id, middleware.VerifiedEmailRequired(), "").Code)
+	// Nor may it grant the administrator-only exemption.
+	forged := &model.User{Id: user.Id, DisplayName: "forged", AllowWithoutEmail: true}
+	require.NoError(t, forged.Update(false))
+	assert.Equal(t, http.StatusForbidden, emailGateRequest(user.Id, middleware.VerifiedEmailRequired(), "").Code)
+	// An administrator edit exempts the unverified user, and revoking it restores the gate.
+	for _, allowed := range []bool{true, false} {
+		edited, err := model.GetUserById(user.Id, false)
+		require.NoError(t, err)
+		edited.Password, edited.AllowWithoutEmail = "", allowed
+		require.NoError(t, edited.Edit(false))
+		want := http.StatusForbidden
+		if allowed {
+			want = http.StatusNoContent
+		}
+		for _, gate := range gates {
+			assert.Equal(t, want, emailGateRequest(user.Id, gate, token.Key).Code)
+		}
+	}
 	require.NoError(t, model.DB.Model(user).Updates(map[string]any{"role": common.RoleRootUser, "email": "", "email_verified": false}).Error)
 	require.NoError(t, model.PublishUserAuthCache(user.Id))
 	for _, gate := range gates {

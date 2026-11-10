@@ -87,7 +87,10 @@ type User struct {
 	Status           int    `json:"status" gorm:"type:int;default:1"` // enabled, disabled
 	Email            string `json:"email" gorm:"index" validate:"max=50"`
 	// Only code-confirmed addresses are trusted; existing rows start unverified.
-	EmailVerified        bool                       `json:"email_verified"`
+	EmailVerified bool `json:"email_verified"`
+	// AllowWithoutEmail lets an administrator exempt this user from the
+	// verified-email requirement. Root is always exempt regardless of it.
+	AllowWithoutEmail    bool                       `json:"allow_without_email" gorm:"column:allow_without_email"`
 	GitHubId             string                     `json:"github_id" gorm:"column:github_id;index"`
 	DiscordId            string                     `json:"discord_id" gorm:"column:discord_id;index"`
 	OidcId               string                     `json:"oidc_id" gorm:"column:oidc_id;index"`
@@ -532,7 +535,7 @@ func GetSelfUserById(id int) (*User, error) {
 		HasPassword bool `gorm:"column:has_password"`
 	}
 	err := DB.Model(&User{}).Select([]string{
-		"id", "username", "display_name", "role", "status", "email", "email_verified",
+		"id", "username", "display_name", "role", "status", "email", "email_verified", "allow_without_email",
 		"github_id", "discord_id", "oidc_id", "wechat_id", "telegram_id",
 		"group", "quota", "used_quota", "request_count", "aff_code", "aff_count",
 		"aff_quota", "aff_history", "inviter_id", "linux_do_id", "setting",
@@ -846,6 +849,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		"aff_history",
 		"auth_version",
 		"email_verified",
+		"allow_without_email",
 	).Updates(newUser).Error; err != nil {
 		return err
 	}
@@ -892,6 +896,8 @@ func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
 		"display_name": newUser.DisplayName,
 		"group":        newUser.Group,
 		"remark":       newUser.Remark,
+		// Admin-only exemption; self-service updates never reach EditWithTx.
+		"allow_without_email": newUser.AllowWithoutEmail,
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password

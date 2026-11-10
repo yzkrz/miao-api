@@ -32,7 +32,12 @@ export function RequiredEmailGate(props: { children: ReactNode }) {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const [refreshing, setRefreshing] = useState(false)
-  if (!user || user.role === 100 || (user.email && user.email_verified)) {
+  if (
+    !user ||
+    user.role === 100 ||
+    user.allow_without_email ||
+    (user.email && user.email_verified)
+  ) {
     return props.children
   }
   const refresh = async () => {

@@ -34,6 +34,7 @@ export interface AuthUser {
   display_name?: string
   email?: string
   email_verified?: boolean
+  allow_without_email?: boolean
   role: number
   status?: number
   group?: string

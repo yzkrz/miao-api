@@ -118,6 +118,22 @@ it('allows root to enter the console without an email', () => {
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
 
+it('lets a user an administrator exempted enter the console without an email', () => {
+  useAuthStore.getState().auth.setUser({
+    id: 2,
+    username: 'exempt',
+    role: 1,
+    allow_without_email: true,
+  })
+  render(
+    <RequiredEmailGate>
+      <p>Exempt console</p>
+    </RequiredEmailGate>
+  )
+  expect(screen.getByText('Exempt console')).toBeVisible()
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
+
 it('requires verification after username confirmation and cancels without deleting the account', async () => {
   vi.spyOn(api, 'get').mockResolvedValue({
     data: {
