@@ -134,6 +134,16 @@ describe('ChannelSummaryTable actions', () => {
         isDetecting={false}
       />
     )
+    expect(
+      within(screen.getAllByRole('row')[1])
+        .getAllByRole('button')
+        .map((button) => button.textContent)
+    ).toEqual(['Retest', 'Report', 'Details'])
+    expect(
+      within(
+        screen.getByRole('button', { name: 'Retest channel upstream' })
+      ).getByText('Retest')
+    ).toBeVisible()
     await user.click(
       screen.getByRole('button', { name: 'Retest channel upstream' })
     )

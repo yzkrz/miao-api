@@ -26,11 +26,6 @@ import {
 } from '@/components/data-table'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber, formatPercent } from '@/lib/format'
 
@@ -184,28 +179,22 @@ export function ChannelSummaryTable(props: ChannelSummaryTableProps) {
     {
       id: 'actions',
       header: <span className='sr-only'>{t('Actions')}</span>,
-      className: 'w-44 text-right',
+      className: 'w-60 text-right',
       cellClassName: 'text-right',
       cell: (row) => (
         <div className='flex justify-end gap-1'>
+          <Button
+            type='button'
+            variant='ghost'
+            size='sm'
+            disabled={props.isDetecting || !row.in_scope}
+            onClick={() => props.onRetest?.(row.id)}
+            aria-label={t('Retest channel {{name}}', { name: row.name })}
+          >
+            <RefreshCw data-icon='inline-start' aria-hidden='true' />
+            {t('Retest')}
+          </Button>
           <ModelRatesPopover row={row} />
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='icon-sm'
-                  disabled={props.isDetecting || !row.in_scope}
-                  onClick={() => props.onRetest?.(row.id)}
-                  aria-label={t('Retest channel {{name}}', { name: row.name })}
-                />
-              }
-            >
-              <RefreshCw aria-hidden='true' />
-            </TooltipTrigger>
-            <TooltipContent>{t('Retest')}</TooltipContent>
-          </Tooltip>
           <Button
             type='button'
             variant='ghost'
