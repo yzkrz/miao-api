@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { webcrypto } from 'node:crypto'
+import { createHash, webcrypto } from 'node:crypto'
 
 import {
   fireEvent,
@@ -30,7 +30,11 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-import { prepareEmailDraft, emailDraftDigest } from '../../../lib/user-email'
+import {
+  prepareEmailDraft,
+  emailDraftDigest,
+  sha256,
+} from '../../../lib/user-email'
 import { UserEmailDrawer } from '../user-email-drawer'
 
 const { verify } = vi.hoisted(() => ({ verify: vi.fn() }))
@@ -126,3 +130,22 @@ it('sanitizes active content and converts uploaded images to content IDs covered
     })
   )
 })
+
+it('computes the server digest when Web Crypto is unavailable on a plain HTTP origin', async () => {
+  const draft = prepareEmailDraft('Notice', '<p>你好 🐷</p>')
+  vi.stubGlobal('crypto', webcrypto)
+  const secure = await emailDraftDigest(draft)
+  vi.stubGlobal('crypto', undefined)
+
+  await expect(emailDraftDigest(draft)).resolves.toBe(secure)
+})
+
+it.each([0, 55, 56, 64, 1000])(
+  'matches Node SHA-256 for a %s-byte message across padding boundaries',
+  (size) => {
+    const message = new Uint8Array(size).map((_, i) => (i * 31) % 256)
+    const expected = createHash('sha256').update(message).digest('hex')
+
+    expect(Buffer.from(sha256(message)).toString('hex')).toBe(expected)
+  }
+)
