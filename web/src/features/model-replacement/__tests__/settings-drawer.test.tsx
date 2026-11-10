@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -96,5 +96,80 @@ describe('ModelReplacementSettingsDrawer', () => {
     expect(
       await screen.findByText('Times use the server time zone: UTC+08:00 (CST)')
     ).toBeInTheDocument()
+  })
+
+  it('edits request failure actions in a nested drawer without closing or saving its parent', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = renderDrawer()
+    const section = await screen.findByRole('region', {
+      name: 'When requests fail',
+    })
+    await user.click(
+      within(section).getByRole('button', { name: 'Edit actions (0)' })
+    )
+    const editor = await screen.findByRole('dialog', {
+      name: 'When requests fail',
+    })
+    expect(
+      document.querySelectorAll('[data-slot="sheet-overlay"]')
+    ).toHaveLength(2)
+    await user.click(within(editor).getByRole('button', { name: 'Add action' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Set tag' }))
+    await user.type(within(editor).getByLabelText('Tag'), 'unavailable')
+    await user.click(within(editor).getByRole('button', { name: 'Done' }))
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(api.put).not.toHaveBeenCalled()
+    const parent = await screen.findByRole('dialog', {
+      name: 'Detection settings',
+    })
+    await user.click(
+      within(parent).getByRole('button', { name: 'Save changes' })
+    )
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith(
+        '/api/model_replacement/settings',
+        expect.objectContaining({
+          request_failure_actions: [
+            { type: 'set_tag', value: 'unavailable', amount: 0 },
+          ],
+          fail_actions: [],
+        })
+      )
+    )
+  })
+
+  it('removes the nested action editor and its backdrop when the settings drawer closes', async () => {
+    const user = userEvent.setup()
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const view = render(
+      <QueryClientProvider client={client}>
+        <ModelReplacementSettingsDrawer open onOpenChange={() => {}} />
+      </QueryClientProvider>
+    )
+    const section = await screen.findByRole('region', {
+      name: 'When requests fail',
+    })
+    await user.click(
+      within(section).getByRole('button', { name: 'Edit actions (0)' })
+    )
+    expect(
+      await screen.findByRole('dialog', { name: 'When requests fail' })
+    ).toBeVisible()
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <ModelReplacementSettingsDrawer open={false} onOpenChange={() => {}} />
+      </QueryClientProvider>
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: 'When requests fail' })
+      ).not.toBeInTheDocument()
+    )
+    expect(
+      document.querySelectorAll('[data-slot="sheet-overlay"]')
+    ).toHaveLength(0)
+    client.clear()
   })
 })
