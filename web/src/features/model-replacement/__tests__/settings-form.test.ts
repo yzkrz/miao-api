@@ -50,6 +50,24 @@ describe('model replacement settings schema', () => {
     expect(issuePaths(DEFAULT_MODEL_REPLACEMENT_SETTINGS)).toEqual([])
   })
 
+  it('validates request failure actions independently of replacement actions', () => {
+    expect(
+      issuePaths({
+        ...DEFAULT_MODEL_REPLACEMENT_SETTINGS,
+        fail_actions: [{ type: 'auto_disable', value: '', amount: 0 }],
+        request_failure_actions: [{ type: 'set_tag', value: '', amount: 0 }],
+      })
+    ).toEqual(['request_failure_actions'])
+    const result = schema.parse({
+      ...DEFAULT_MODEL_REPLACEMENT_SETTINGS,
+      request_failure_actions: [{ type: 'set_priority', value: '', amount: 7 }],
+    })
+    expect(result.request_failure_actions).toEqual([
+      { type: 'set_priority', value: '', amount: 7 },
+    ])
+    expect(result.fail_actions).toEqual([])
+  })
+
   it('accepts detection turned on with empty action lists', () => {
     expect(
       issuePaths({ ...DEFAULT_MODEL_REPLACEMENT_SETTINGS, enabled: true })

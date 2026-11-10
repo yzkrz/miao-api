@@ -80,6 +80,7 @@ export type ModelReplacementSettings = {
   threshold: number
   pass_actions: DetectionAction[]
   fail_actions: DetectionAction[]
+  request_failure_actions: DetectionAction[]
   models: DetectedModelSetting[]
 }
 

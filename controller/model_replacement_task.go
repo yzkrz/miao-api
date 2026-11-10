@@ -220,9 +220,14 @@ func runModelReplacementDetection(ctx context.Context, runID string, manual bool
 	cacheChanged := false
 	for _, target := range targets {
 		stats, verdict, matchPercent := summarizeModelReplacementAttempts(target.models, target.attempts, setting.Threshold)
-		actions := setting.FailActions
-		if verdict == model.ModelReplacementVerdictPassed {
+		var actions []operation_setting.ModelReplacementAction
+		switch verdict {
+		case model.ModelReplacementVerdictPassed:
 			actions = setting.PassActions
+		case model.ModelReplacementVerdictReplaced:
+			actions = setting.FailActions
+		case model.ModelReplacementVerdictFailed:
+			actions = setting.RequestFailureActions
 		}
 		applied, changed, applyErr := applyModelReplacementActions(target.channel, verdict, actions)
 		cacheChanged = cacheChanged || changed

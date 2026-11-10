@@ -103,11 +103,12 @@ type ModelReplacementSetting struct {
 	TimeoutSeconds  int                              `json:"timeout_seconds"`
 	Threshold       float64                          `json:"threshold"`
 	// PassActions run on a channel whose detected models all passed;
-	// FailActions run on a channel with a replaced model or with requests
-	// that still failed after their retries.
-	PassActions []ModelReplacementAction       `json:"pass_actions"`
-	FailActions []ModelReplacementAction       `json:"fail_actions"`
-	Models      []ModelReplacementModelSetting `json:"models"`
+	// FailActions run only on a channel with a suspected replacement.
+	// RequestFailureActions take precedence when any request exhausts retries.
+	PassActions           []ModelReplacementAction       `json:"pass_actions"`
+	FailActions           []ModelReplacementAction       `json:"fail_actions"`
+	RequestFailureActions []ModelReplacementAction       `json:"request_failure_actions"`
+	Models                []ModelReplacementModelSetting `json:"models"`
 }
 
 var modelReplacementSetting atomic.Pointer[ModelReplacementSetting]
@@ -119,14 +120,15 @@ func init() {
 
 func DefaultModelReplacementSetting() ModelReplacementSetting {
 	return ModelReplacementSetting{
-		IntervalMinutes: DefaultModelReplacementIntervalMinutes,
-		Rounds:          DefaultModelReplacementRounds,
-		Concurrency:     DefaultModelReplacementConcurrency,
-		TimeoutSeconds:  DefaultModelReplacementTimeoutSeconds,
-		IntervalWindows: []ModelReplacementIntervalWindow{},
-		PassActions:     []ModelReplacementAction{},
-		FailActions:     []ModelReplacementAction{},
-		Models:          []ModelReplacementModelSetting{},
+		IntervalMinutes:       DefaultModelReplacementIntervalMinutes,
+		Rounds:                DefaultModelReplacementRounds,
+		Concurrency:           DefaultModelReplacementConcurrency,
+		TimeoutSeconds:        DefaultModelReplacementTimeoutSeconds,
+		IntervalWindows:       []ModelReplacementIntervalWindow{},
+		PassActions:           []ModelReplacementAction{},
+		FailActions:           []ModelReplacementAction{},
+		RequestFailureActions: []ModelReplacementAction{},
+		Models:                []ModelReplacementModelSetting{},
 	}
 }
 
@@ -189,7 +191,7 @@ func (setting *ModelReplacementSetting) normalize() error {
 		return common.NewMessage("Mismatch threshold must be between 0 and 100")
 	}
 
-	for _, actions := range []*[]ModelReplacementAction{&setting.PassActions, &setting.FailActions} {
+	for _, actions := range []*[]ModelReplacementAction{&setting.PassActions, &setting.FailActions, &setting.RequestFailureActions} {
 		if *actions == nil {
 			*actions = []ModelReplacementAction{}
 		}

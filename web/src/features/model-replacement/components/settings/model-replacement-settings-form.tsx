@@ -288,9 +288,25 @@ export function ModelReplacementSettingsForm(
                 name='fail_actions'
                 render={({ field, fieldState }) => (
                   <ActionListField
-                    title={t('When detection fails')}
+                    title={t('When replacement is suspected')}
                     description={t(
-                      'Runs on a channel with a suspected replacement, or whose requests still failed after their retries.'
+                      'Runs only when a model is suspected of being replaced and no request has failed after retries.'
+                    )}
+                    value={field.value}
+                    onChange={field.onChange}
+                    groups={props.groups}
+                    error={fieldState.error?.message}
+                  />
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='request_failure_actions'
+                render={({ field, fieldState }) => (
+                  <ActionListField
+                    title={t('When requests fail')}
+                    description={t(
+                      'Runs when a request still fails after all retries. Only these actions run, even if another model is suspected of being replaced.'
                     )}
                     value={field.value}
                     onChange={field.onChange}

@@ -53,6 +53,7 @@ export const DEFAULT_MODEL_REPLACEMENT_SETTINGS: ModelReplacementSettings = {
   interval_windows: [],
   pass_actions: [],
   fail_actions: [],
+  request_failure_actions: [],
   models: [],
 }
 
@@ -248,6 +249,7 @@ export function createModelReplacementSettingsSchema(t: Translate) {
         ),
       pass_actions: actionListSchema,
       fail_actions: actionListSchema,
+      request_failure_actions: actionListSchema,
       models: z.array(detectedModelSchema),
     })
     .superRefine((values, ctx) => {
@@ -274,7 +276,11 @@ export function createModelReplacementSettingsSchema(t: Translate) {
           }),
         })
       }
-      for (const key of ['pass_actions', 'fail_actions'] as const) {
+      for (const key of [
+        'pass_actions',
+        'fail_actions',
+        'request_failure_actions',
+      ] as const) {
         const invalid = values[key].findIndex((action) =>
           validateAction(action)
         )

@@ -113,23 +113,70 @@ func TestParseModelReplacementSetting(t *testing.T) {
 		{Type: operation_setting.ModelReplacementActionSetPriority, Amount: -5},
 	}, actions.PassActions)
 	assert.Equal(t, []operation_setting.ModelReplacementAction{{Type: operation_setting.ModelReplacementActionAutoDisable}}, actions.FailActions)
+	assert.Empty(t, actions.RequestFailureActions, "legacy settings must not apply replacement actions to failed requests")
+	requestActions, err := operation_setting.ParseModelReplacementSetting(`{"request_failure_actions":[{"type":"set_tag","value":" timeout ","amount":1}]}`)
+	require.NoError(t, err)
+	assert.Equal(t, []operation_setting.ModelReplacementAction{{Type: operation_setting.ModelReplacementActionSetTag, Value: "timeout"}}, requestActions.RequestFailureActions)
+	encoded, err := common.Marshal(requestActions)
+	require.NoError(t, err)
+	reloaded, err := operation_setting.ParseModelReplacementSetting(string(encoded))
+	require.NoError(t, err)
+	assert.Equal(t, requestActions.RequestFailureActions, reloaded.RequestFailureActions)
 
 	for name, value := range map[string]string{
-		"unknown action":         `{"pass_actions":[{"type":"delete_channel"}]}`,
-		"empty group":            `{"pass_actions":[{"type":"add_group","value":" "}]}`,
-		"group with comma":       `{"fail_actions":[{"type":"remove_group","value":"a,b"}]}`,
-		"empty tag":              `{"fail_actions":[{"type":"set_tag"}]}`,
-		"zero increase":          `{"pass_actions":[{"type":"increase_priority","amount":0}]}`,
-		"negative weight":        `{"pass_actions":[{"type":"set_weight","amount":-1}]}`,
-		"invalid regex":          `{"models":[{"model":"m","question":"q","expected_answer":"(","match_mode":"regex"}]}`,
-		"duplicate model":        `{"models":[{"model":"m","question":"q","expected_answer":"a"},{"model":"m","question":"q","expected_answer":"a"}]}`,
-		"missing answer":         `{"models":[{"model":"m","question":"q","expected_answer":""}]}`,
-		"retry out of range":     `{"models":[{"model":"m","question":"q","expected_answer":"a","retry_times":11}]}`,
-		"threshold out of range": `{"threshold":101}`,
-		"zero rounds":            `{"rounds":0}`,
+		"invalid request failure action": ` {"request_failure_actions":[{"type":"delete_channel"}]}`,
+		"invalid request failure amount": ` {"request_failure_actions":[{"type":"decrease_priority","amount":-1}]}`,
+		"unknown action":                 `{"pass_actions":[{"type":"delete_channel"}]}`,
+		"empty group":                    `{"pass_actions":[{"type":"add_group","value":" "}]}`,
+		"group with comma":               `{"fail_actions":[{"type":"remove_group","value":"a,b"}]}`,
+		"empty tag":                      `{"fail_actions":[{"type":"set_tag"}]}`,
+		"zero increase":                  `{"pass_actions":[{"type":"increase_priority","amount":0}]}`,
+		"negative weight":                `{"pass_actions":[{"type":"set_weight","amount":-1}]}`,
+		"invalid regex":                  `{"models":[{"model":"m","question":"q","expected_answer":"(","match_mode":"regex"}]}`,
+		"duplicate model":                `{"models":[{"model":"m","question":"q","expected_answer":"a"},{"model":"m","question":"q","expected_answer":"a"}]}`,
+		"missing answer":                 `{"models":[{"model":"m","question":"q","expected_answer":""}]}`,
+		"retry out of range":             `{"models":[{"model":"m","question":"q","expected_answer":"a","retry_times":11}]}`,
+		"threshold out of range":         `{"threshold":101}`,
+		"zero rounds":                    `{"rounds":0}`,
 	} {
 		_, err := operation_setting.ParseModelReplacementSetting(value)
 		assert.Error(t, err, name)
+	}
+}
+
+func TestModelReplacementRequestFailureSettingsPersist(t *testing.T) {
+	db := setupModelReplacementTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Option{}))
+	previous := operation_setting.ModelReplacementSettingJSON()
+	common.OptionMapRWMutex.Lock()
+	previousOptions := common.OptionMap
+	common.OptionMap = make(map[string]string)
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		operation_setting.LoadModelReplacementSetting(previous)
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = previousOptions
+		common.OptionMapRWMutex.Unlock()
+	})
+	for _, body := range []string{
+		`{"fail_actions":[{"type":"auto_disable"}]}`,
+		`{"fail_actions":[{"type":"auto_disable"}],"request_failure_actions":[{"type":"set_tag","value":"unavailable"}]}`,
+		`{"fail_actions":[{"type":"auto_disable"}],"request_failure_actions":[]}`,
+	} {
+		expected, err := operation_setting.ParseModelReplacementSetting(body)
+		require.NoError(t, err)
+		for range 2 {
+			response := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(response)
+			c.Request = httptest.NewRequest(http.MethodPut, "/api/model_replacement/settings", strings.NewReader(body))
+			UpdateModelReplacementSettings(c)
+			require.Contains(t, response.Body.String(), `"success":true`)
+			var stored model.Option
+			require.NoError(t, db.Where(&model.Option{Key: operation_setting.ModelReplacementSettingOptionKey}).First(&stored).Error)
+			operation_setting.LoadModelReplacementSetting(stored.Value)
+			assert.Equal(t, expected.RequestFailureActions, operation_setting.GetModelReplacementSetting().RequestFailureActions)
+			assert.Equal(t, expected.FailActions, operation_setting.GetModelReplacementSetting().FailActions)
+		}
 	}
 }
 
@@ -587,7 +634,7 @@ func TestModelReplacementDetectionProbesChannelsAndAppliesVerdicts(t *testing.T)
 
 	previous := operation_setting.ModelReplacementSettingJSON()
 	t.Cleanup(func() { operation_setting.LoadModelReplacementSetting(previous) })
-	operation_setting.LoadModelReplacementSetting(`{"enabled":true,"rounds":2,"concurrency":2,"timeout_seconds":10,"threshold":0,"pass_actions":[{"type":"remove_group","value":"abnormal"},{"type":"add_group","value":"healthy"}],"fail_actions":[{"type":"remove_group","value":"healthy"},{"type":"add_group","value":"abnormal"},{"type":"decrease_priority","amount":10}],"models":[{"model":"mr-probe-model","question":"` + question + `","expected_answer":"mr-probe-model","match_mode":"contains","retry_times":1}]}`)
+	operation_setting.LoadModelReplacementSetting(`{"enabled":true,"rounds":2,"concurrency":2,"timeout_seconds":10,"threshold":0,"pass_actions":[{"type":"remove_group","value":"abnormal"},{"type":"add_group","value":"healthy"}],"fail_actions":[{"type":"remove_group","value":"healthy"},{"type":"add_group","value":"abnormal"},{"type":"decrease_priority","amount":10}],"request_failure_actions":[{"type":"remove_group","value":"healthy"},{"type":"add_group","value":"unavailable"},{"type":"set_priority","amount":7}],"models":[{"model":"mr-probe-model","question":"` + question + `","expected_answer":"mr-probe-model","match_mode":"contains","retry_times":1}]}`)
 	require.True(t, operation_setting.GetModelReplacementSetting().Enabled)
 
 	var lastProcessed, lastTotal int
@@ -612,11 +659,10 @@ func TestModelReplacementDetectionProbesChannelsAndAppliesVerdicts(t *testing.T)
 	}
 	assert.Equal(t, "default,healthy", channels[1].Group)
 	assert.Zero(t, channels[1].GetPriority())
-	for _, id := range []int{2, 3} {
-		assert.Equal(t, "default,abnormal", channels[id].Group, "fail actions run for replaced and failed channels")
-		assert.Zero(t, channels[id].GetPriority(), "failure actions cannot lower priority below zero")
-		assert.Equal(t, common.ChannelStatusEnabled, channels[id].Status, "no configured action disables the channel")
-	}
+	assert.Equal(t, "default,abnormal", channels[2].Group, "replacement actions only run for replaced channels")
+	assert.Zero(t, channels[2].GetPriority(), "failure actions cannot lower priority below zero")
+	assert.Equal(t, "default,unavailable", channels[3].Group)
+	assert.EqualValues(t, 7, channels[3].GetPriority(), "request failures use only their own actions")
 	assert.Equal(t, "default,abnormal", channels[4].Group)
 
 	history, err := model.GetModelReplacementHistory(1, 0, math.MaxInt64, 10)
@@ -651,6 +697,11 @@ func TestModelReplacementDetectionProbesChannelsAndAppliesVerdicts(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, brokenHistory, 1)
 	assert.Equal(t, model.ModelReplacementVerdictFailed, brokenHistory[0].Verdict)
+	assert.Equal(t, []model.ModelReplacementAppliedAction{
+		{Type: operation_setting.ModelReplacementActionRemoveGroup, Value: "healthy", Changed: true},
+		{Type: operation_setting.ModelReplacementActionAddGroup, Value: "unavailable", Changed: true},
+		{Type: operation_setting.ModelReplacementActionSetPriority, Amount: 7, Changed: true},
+	}, brokenHistory[0].View().Actions)
 	brokenAttempts, err := model.GetModelReplacementAttempts(brokenHistory[0].ID)
 	require.NoError(t, err)
 	require.Len(t, brokenAttempts, 1)
@@ -665,6 +716,23 @@ func TestModelReplacementDetectionProbesChannelsAndAppliesVerdicts(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, common.ChannelStatusAutoDisabled, disabledChannel.Status)
 	assert.Equal(t, "default,abnormal", disabledChannel.Group, "manual retests do not modify disabled channel settings")
+	// Clearing the dedicated failure list must not fall back to the replacement
+	// actions, including during an individual channel retest.
+	setting := operation_setting.GetModelReplacementSetting()
+	setting.RequestFailureActions = nil
+	setting.FailActions = []operation_setting.ModelReplacementAction{{Type: operation_setting.ModelReplacementActionAutoDisable}}
+	encoded, err := common.Marshal(setting)
+	require.NoError(t, err)
+	operation_setting.LoadModelReplacementSetting(string(encoded))
+	failedRetest, err := runModelReplacementDetection(context.Background(), "single-failed", true, 3, func(int, int) {})
+	require.NoError(t, err)
+	assert.Equal(t, 1, failedRetest.Channels)
+	assert.Equal(t, 1, failedRetest.Failed)
+	unchanged, err := model.GetChannelById(3, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusEnabled, unchanged.Status)
+	assert.Equal(t, "default,unavailable", unchanged.Group)
+	assert.EqualValues(t, 7, unchanged.GetPriority())
 }
 
 func TestModelReplacementDetectionResponseModelIdentity(t *testing.T) {
