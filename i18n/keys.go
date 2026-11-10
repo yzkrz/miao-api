@@ -22,6 +22,7 @@ const (
 	MsgRateLimitReached      = "rate_limit.reached"
 	MsgRateLimitTotalReached = "rate_limit.total_reached"
 
+	MsgUserUsageLimitReachedMinutes         = "user_limit.usage_reached_minutes"
 	MsgUserUsageLimitReachedHours           = "user_limit.usage_reached_hours"
 	MsgUserUsageLimitReachedDays            = "user_limit.usage_reached_days"
 	MsgUserUsageLimitReachedCalendar        = "user_limit.usage_reached_calendar"

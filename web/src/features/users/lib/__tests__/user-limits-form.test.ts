@@ -145,6 +145,22 @@ describe('user limits form conversion', () => {
     ])
   })
 
+  it('maps a window that is not whole hours to a minute row and back', () => {
+    const values = userLimitsToFormValues(savedLimits([[5400, 500_000, true]]))
+
+    expect(values.usage_rules).toEqual([
+      rule({
+        window: 'custom',
+        custom_amount: 90,
+        custom_unit: 'minutes',
+        quota_amount: 1,
+      }),
+    ])
+    expect(userLimitsFormToPayload(values).usage_rules[0].window_seconds).toBe(
+      5400
+    )
+  })
+
   it('converts form rows back to window seconds and quota units', () => {
     const payload = userLimitsFormToPayload({
       max_concurrency: 2,
@@ -185,6 +201,7 @@ describe('user limits form validation', () => {
         usage_rules: [
           rule({ window: '18000' }),
           rule({ window: 'custom', custom_amount: 90, custom_unit: 'days' }),
+          rule({ window: 'custom', custom_amount: 1, custom_unit: 'minutes' }),
         ],
       })
     ).toEqual([])
@@ -216,7 +233,10 @@ describe('user limits form validation', () => {
       'longer than 90 days',
       rule({ window: 'custom', custom_amount: 91, custom_unit: 'days' }),
     ],
-    ['shorter than 1 hour', rule({ window: 'custom', custom_amount: 0 })],
+    [
+      'shorter than 1 minute',
+      rule({ window: 'custom', custom_amount: 0, custom_unit: 'minutes' }),
+    ],
     ['not a whole number', rule({ window: 'custom', custom_amount: 1.5 })],
   ])('rejects a custom window %s', (_label, invalid) => {
     expect(issuePaths({ max_concurrency: 0, usage_rules: [invalid] })).toEqual([

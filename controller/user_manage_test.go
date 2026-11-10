@@ -811,8 +811,8 @@ func TestUpdateUserLimitsRejectsInvalidRulesWithoutSaving(t *testing.T) {
 		{"calendar hour not supported", `{"usage_rules":[{"window_seconds":3600,"quota_limit":100,"mode":"calendar","calendar_period":"hour"}]}`, "Invalid usage limit mode or calendar period"},
 		{"empty model name", `{"usage_rules":[{"window_seconds":86400,"quota_limit":100,"models":[" " ]}]}`, "Invalid model selection"},
 		{"concurrency above the cap", `{"max_concurrency":1001}`, "Maximum concurrency must be between 0 and 1000"},
-		{"window not in whole hours", `{"usage_rules":[{"window_seconds":5400,"quota_limit":100,"enabled":true}]}`, "Usage limit windows must be whole hours between 1 hour and 90 days"},
-		{"window longer than 90 days", `{"usage_rules":[{"window_seconds":7862400,"quota_limit":100,"enabled":true}]}`, "Usage limit windows must be whole hours between 1 hour and 90 days"},
+		{"window not in whole minutes", `{"usage_rules":[{"window_seconds":5430,"quota_limit":100,"enabled":true}]}`, "Usage limit windows must be whole minutes between 1 minute and 90 days"},
+		{"window longer than 90 days", `{"usage_rules":[{"window_seconds":7862400,"quota_limit":100,"enabled":true}]}`, "Usage limit windows must be whole minutes between 1 minute and 90 days"},
 		{"zero quota limit", `{"usage_rules":[{"window_seconds":18000,"quota_limit":0,"enabled":true}]}`, "Usage limit quota is out of range"},
 		{"duplicate window", `{"usage_rules":[{"window_seconds":18000,"quota_limit":100,"enabled":true},{"window_seconds":18000,"quota_limit":200,"enabled":false}]}`, "Each usage limit window can only be used once"},
 	} {

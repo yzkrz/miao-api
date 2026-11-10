@@ -113,6 +113,7 @@ export function UsageRulesField(props: UsageRulesFieldProps) {
     { value: CUSTOM_USAGE_WINDOW, label: t('Custom') },
   ]
   const unitItems = [
+    { value: 'minutes', label: t('minutes') },
     { value: 'hours', label: t('hours') },
     { value: 'days', label: t('days') },
   ]

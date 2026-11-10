@@ -324,6 +324,19 @@ func TestUserUsageLimitMessageIsEnglishAndUsesServerTime(t *testing.T) {
 			assert.Contains(t, apiErr.Error(), "UTC+05:45 (server time). Please retry after that time.")
 		})
 	}
+	for _, tc := range []struct {
+		window int64
+		limit  string
+	}{
+		{90 * 60, "You have reached the 90-minute usage limit."},
+		{30 * 60, "You have reached the 30-minute usage limit."},
+		{2 * 3600, "You have reached the 2-hour usage limit."},
+	} {
+		t.Run(tc.limit, func(t *testing.T) {
+			message := userUsageLimitMessage(UserUsageRuleStatus{WindowSeconds: tc.window, ResetAt: now + 60}, now)
+			assert.True(t, strings.HasPrefix(message, tc.limit+" It will reset in 1 minute,"), message)
+		})
+	}
 }
 
 func TestUserUsageLimitMessageRoundsWaitAndResetUp(t *testing.T) {

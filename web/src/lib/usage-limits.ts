@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { TFunction } from 'i18next'
 
+export const MINUTE_SECONDS = 60
 export const HOUR_SECONDS = 3600
 export const DAY_SECONDS = 86400
 
@@ -87,11 +88,17 @@ export function formatUsageRuleWindow(
   return formatUsageWindow(rule.window_seconds, t)
 }
 
-/** Window length as "5 hours" or "7 days"; whole days read as days. */
+/** Window length as "30 minutes", "5 hours" or "7 days", in the largest whole unit. */
 export function formatUsageWindow(seconds: number, t: TFunction): string {
   if (seconds > 0 && seconds % DAY_SECONDS === 0) {
     const days = seconds / DAY_SECONDS
     return days === 1 ? t('1 day') : t('{{count}} days', { count: days })
+  }
+  if (seconds % HOUR_SECONDS !== 0) {
+    const minutes = Math.round(seconds / MINUTE_SECONDS)
+    return minutes === 1
+      ? t('1 minute')
+      : t('{{count}} minutes', { count: minutes })
   }
   const hours = Math.round(seconds / HOUR_SECONDS)
   return hours === 1 ? t('1 hour') : t('{{count}} hours', { count: hours })

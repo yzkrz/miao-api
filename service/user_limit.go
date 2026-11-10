@@ -163,6 +163,9 @@ func userUsageLimitMessage(status UserUsageRuleStatus, now int64) string {
 	} else if status.WindowSeconds%86400 == 0 {
 		limitKey = i18n.MsgUserUsageLimitReachedDays
 		count = status.WindowSeconds / 86400
+	} else if status.WindowSeconds%3600 != 0 {
+		limitKey = i18n.MsgUserUsageLimitReachedMinutes
+		count = status.WindowSeconds / 60
 	}
 	limit := i18n.Translate(lang, limitKey, map[string]any{"Count": count})
 

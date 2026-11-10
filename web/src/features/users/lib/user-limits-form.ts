@@ -23,6 +23,7 @@ import {
   CALENDAR_WINDOWS,
   DAY_SECONDS,
   HOUR_SECONDS,
+  MINUTE_SECONDS,
   type UserLimits,
   type CalendarPeriod,
 } from '@/lib/usage-limits'
@@ -44,7 +45,13 @@ export const USAGE_WINDOW_PRESETS = [
 
 export const CUSTOM_USAGE_WINDOW = 'custom'
 
-export type UsageWindowUnit = 'hours' | 'days'
+export type UsageWindowUnit = 'minutes' | 'hours' | 'days'
+
+const UNIT_SECONDS: Record<UsageWindowUnit, number> = {
+  minutes: MINUTE_SECONDS,
+  hours: HOUR_SECONDS,
+  days: DAY_SECONDS,
+}
 
 export interface UsageRuleFormValue {
   models?: string[]
@@ -79,8 +86,7 @@ export function usageRuleWindowSeconds(rule: UsageRuleFormValue): number {
   if (rule.window !== CUSTOM_USAGE_WINDOW) {
     return Number(rule.window)
   }
-  const unitSeconds = rule.custom_unit === 'days' ? DAY_SECONDS : HOUR_SECONDS
-  return rule.custom_amount * unitSeconds
+  return rule.custom_amount * UNIT_SECONDS[rule.custom_unit]
 }
 
 type Translate = (key: string, options?: Record<string, unknown>) => string
@@ -112,7 +118,7 @@ export function createUserLimitsFormSchema(t: Translate) {
               .optional(),
             window: z.string(),
             custom_amount: z.number(),
-            custom_unit: z.enum(['hours', 'days']),
+            custom_unit: z.enum(['minutes', 'hours', 'days']),
             quota_amount: z.number().positive(amountMessage),
             enabled: z.boolean(),
           })
@@ -132,13 +138,15 @@ export function createUserLimitsFormSchema(t: Translate) {
           rule.mode !== 'calendar' &&
           rule.window === CUSTOM_USAGE_WINDOW &&
           (!Number.isInteger(rule.custom_amount) ||
-            seconds < HOUR_SECONDS ||
+            seconds < MINUTE_SECONDS ||
             seconds > MAX_WINDOW_SECONDS)
         ) {
           ctx.addIssue({
             code: 'custom',
             path: ['usage_rules', index, 'custom_amount'],
-            message: t('Enter a whole number of hours or days up to 90 days'),
+            message: t(
+              'Enter a whole number of minutes, hours or days up to 90 days'
+            ),
           })
         }
         if (seen.has(seconds)) {
@@ -173,17 +181,17 @@ export function userLimitsToFormValues(
       const isPreset = (USAGE_WINDOW_PRESETS as readonly number[]).includes(
         rule.window_seconds
       )
-      const inDays = rule.window_seconds % DAY_SECONDS === 0
+      let unit: UsageWindowUnit = 'minutes'
+      if (rule.window_seconds % DAY_SECONDS === 0) unit = 'days'
+      else if (rule.window_seconds % HOUR_SECONDS === 0) unit = 'hours'
       return {
         ...(rule.models?.length ? { models: rule.models } : {}),
         ...(rule.mode === 'calendar'
           ? { mode: rule.mode, calendar_period: rule.calendar_period ?? 'day' }
           : {}),
         window: isPreset ? String(rule.window_seconds) : CUSTOM_USAGE_WINDOW,
-        custom_amount: inDays
-          ? rule.window_seconds / DAY_SECONDS
-          : rule.window_seconds / HOUR_SECONDS,
-        custom_unit: inDays ? 'days' : 'hours',
+        custom_amount: rule.window_seconds / UNIT_SECONDS[unit],
+        custom_unit: unit,
         quota_amount: quotaUnitsToEditableAmount(rule.quota_limit),
         enabled: rule.enabled,
       }

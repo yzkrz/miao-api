@@ -16,7 +16,7 @@ import (
 const (
 	MaxUserUsageRules         = 10
 	MaxUserConcurrencyLimit   = 1000
-	MinUserUsageWindowSeconds = int64(3600)
+	MinUserUsageWindowSeconds = int64(60)
 	MaxUserUsageWindowSeconds = int64(90 * 24 * 3600)
 
 	userLimitSnapshotCacheTTL      = 30 * time.Second

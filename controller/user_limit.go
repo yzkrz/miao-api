@@ -202,8 +202,8 @@ func UpdateUserLimits(c *gin.Context) {
 		} else if rule.CalendarPeriod != "" {
 			common.ApiErrorT(c, "Invalid usage limit mode or calendar period")
 			return
-		} else if rule.WindowSeconds < model.MinUserUsageWindowSeconds || rule.WindowSeconds > model.MaxUserUsageWindowSeconds || rule.WindowSeconds%3600 != 0 {
-			common.ApiErrorT(c, "Usage limit windows must be whole hours between 1 hour and 90 days")
+		} else if rule.WindowSeconds < model.MinUserUsageWindowSeconds || rule.WindowSeconds > model.MaxUserUsageWindowSeconds || rule.WindowSeconds%60 != 0 {
+			common.ApiErrorT(c, "Usage limit windows must be whole minutes between 1 minute and 90 days")
 			return
 		}
 		if len(rule.Models) > 10000 {
