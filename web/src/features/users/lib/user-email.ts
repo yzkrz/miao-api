@@ -50,6 +50,48 @@ export function prepareEmailDraft(
   return { subject: subject.trim(), html: template.innerHTML, images }
 }
 
+type Translate = (key: string, options?: Record<string, unknown>) => string
+
+/**
+ * Account suspension notice offered after an administrator disables a user.
+ * Names are escaped; the server sanitizer keeps only the structural markup.
+ */
+export function accountSuspendedEmail(
+  t: Translate,
+  values: { username: string; siteName: string; siteUrl: string }
+): { subject: string; html: string } {
+  const text = (value: string) => {
+    const node = document.createElement('span')
+    node.textContent = value
+    return node.innerHTML
+  }
+  const site = text(values.siteName)
+  const options = {
+    site,
+    username: text(values.username),
+    interpolation: { escapeValue: false },
+  }
+  const link = /^https?:\/\//.test(values.siteUrl)
+    ? `<p><a href="${text(values.siteUrl)}">${text(values.siteUrl)}</a></p>`
+    : ''
+  return {
+    subject: t('Your {{site}} account has been suspended', {
+      site: values.siteName,
+      interpolation: { escapeValue: false },
+    }),
+    html: [
+      `<h2>${t('Your account has been suspended', options)}</h2>`,
+      `<p>${t('Hi {{username}},', options)}</p>`,
+      `<p>${t('We have suspended your {{site}} account. While it is suspended, you cannot sign in and requests made with your API keys will be rejected.', options)}</p>`,
+      `<p>${t('Accounts are usually suspended when their activity violates our terms of service or usage policies.', options)}</p>`,
+      `<p>${t('If you believe this was a mistake, reply to this email or contact the site administrator to request a review.', options)}</p>`,
+      `<p>${t('The {{site}} team', options)}</p>`,
+      '<hr>',
+      link,
+    ].join(''),
+  }
+}
+
 export async function emailDraftDigest(draft: UserEmailDraft): Promise<string> {
   let content = `${draft.subject}\0${draft.html}`
   for (const image of draft.images) {

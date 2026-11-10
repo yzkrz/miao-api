@@ -24,6 +24,7 @@ import { useEffect } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type { User } from '../../types'
 import { DataTableRowActions } from '../data-table-row-actions'
@@ -105,6 +106,7 @@ async function completeTwoFactorVerification() {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  useAuthStore.getState().auth.reset()
 })
 
 it('deleting a user sends the request only with a single-use proof for that user', async () => {
@@ -195,6 +197,63 @@ it('disabling a user from the row menu binds the proof to the user and action', 
       scope: 'admin.user.manage',
       context: { user_id: 2, action: 'disable' },
     }),
+    expect.anything()
+  )
+})
+
+it.each([
+  [
+    'with an email is asked whether to send a suspension notice',
+    'user@example.com',
+    true,
+  ],
+  ['without an email is not asked to send a notice', '', false],
+])('disabling a user %s', async (_label, email, prompted) => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'admin', role: 10 })
+  const proof = mockVerification('admin.user.manage', 'manage-proof')
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/verify') return proof
+    if (url === '/api/user/manage') return { data: { success: true } }
+    throw new Error(`Unexpected POST ${url}`)
+  })
+  renderInProvider(
+    <DataTableRowActions
+      row={{ original: { ...target, email } } as Row<User>}
+    />
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+  await userEvent.click(
+    await screen.findByRole('menuitem', { name: 'Disable' })
+  )
+  await completeTwoFactorVerification()
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/user/manage',
+      { id: 2, action: 'disable' },
+      expect.anything()
+    )
+  )
+
+  if (!prompted) {
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Notify the user by email?' })
+    ).not.toBeInTheDocument()
+    return
+  }
+  const notice = await screen.findByRole('alertdialog', {
+    name: 'Notify the user by email?',
+  })
+  expect(notice).toHaveTextContent('Your account has been suspended')
+  expect(notice).toHaveTextContent('Hi managed-user,')
+  await userEvent.click(screen.getByRole('button', { name: "Don't send" }))
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Notify the user by email?' })
+    ).not.toBeInTheDocument()
+  )
+  expect(post).not.toHaveBeenCalledWith(
+    '/api/user/2/email',
+    expect.anything(),
     expect.anything()
   )
 })

@@ -63,6 +63,7 @@ import {
 } from '../constants'
 import { getUserActionMessage } from '../lib'
 import type { User } from '../types'
+import { DisabledUserNoticeDialog } from './dialogs/disabled-user-notice-dialog'
 import { UserApiKeysDrawer } from './dialogs/user-api-keys-drawer'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
 import { UserEmailDrawer } from './dialogs/user-email-drawer'
@@ -104,6 +105,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [limitsDialogOpen, setLimitsDialogOpen] = useState(false)
   const [keysDrawerOpen, setKeysDrawerOpen] = useState(false)
   const [emailDrawerOpen, setEmailDrawerOpen] = useState(false)
+  const [disabledNoticeOpen, setDisabledNoticeOpen] = useState(false)
   const canSendEmail =
     !!operator &&
     operator.role >= USER_ROLE.ADMIN &&
@@ -137,6 +139,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
       if (result.success) {
         toast.success(t(getUserActionMessage(action)))
         triggerRefresh()
+        if (action === 'disable' && canSendEmail) setDisabledNoticeOpen(true)
       } else {
         handleServerError(result, t('Failed to {{action}} user', { action }))
       }
@@ -439,6 +442,18 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           open={keysDrawerOpen}
           onOpenChange={setKeysDrawerOpen}
           user={{ id: user.id, username: user.username }}
+        />
+      )}
+      {canSendEmail && disabledNoticeOpen && (
+        <DisabledUserNoticeDialog
+          key={user.id}
+          open
+          onOpenChange={setDisabledNoticeOpen}
+          user={{
+            id: user.id,
+            username: user.username,
+            email: user.email ?? '',
+          }}
         />
       )}
       {canSendEmail && emailDrawerOpen && (
